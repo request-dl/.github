@@ -1,0 +1,18 @@
+name: Generate Release
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  update_release_draft:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: release-drafter/release-drafter@v5.23.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

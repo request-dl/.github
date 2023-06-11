@@ -14,7 +14,7 @@ on:
 jobs:
   build:
     runs-on: ${{ inputs.platform }}
-    name: Swift ${{ inputs.swift-version }}
+    name: Swift ${{ inputs.swift-version }} on ${{ inputs.platform }}
     steps:
       - name: ☑️ Swift Select
         uses: swift-actions/setup-swift@v1

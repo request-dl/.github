@@ -3,8 +3,9 @@ name: Code Coverage
 on:
   workflow_call:
     inputs:
-      swift-version:
-        required: true
+      xcode-version:
+        default: '14.2'
+        required: false
         type: string
       package-tests:
         required: true
@@ -24,10 +25,8 @@ jobs:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v3.5.3
 
-      - name: ☑️ Swift Select
-        uses: swift-actions/setup-swift@v1
-        with:
-            swift-version: ${{ inputs.swift-version}}
+      - name: ☑️ Xcode Select
+        run: sudo Xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
 
       - name: 🛠️ Test Package
         run: swift test --enable-code-coverage

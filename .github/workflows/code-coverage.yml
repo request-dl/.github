@@ -3,6 +3,9 @@ name: Code Coverage
 on:
   workflow_call:
     inputs:
+      swift-version:
+        required: true
+        type: string
       package-tests:
         required: true
         type: string
@@ -16,6 +19,11 @@ jobs:
     steps:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v3.5.3
+
+      - name: ☑️ Swift Select
+        uses: swift-actions/setup-swift@v1
+        with:
+            swift-version: ${{ inputs.swift-version}}
 
       - name: 🛠️ Test Package
         run: swift test --enable-code-coverage

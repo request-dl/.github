@@ -12,10 +12,14 @@ on:
       target:
         required: true
         type: string
+      platform:
+        default: 'macOS-latest'
+        required: false
+        type: string
 
 jobs:
   code-coverage:
-    runs-on: macOS-latest
+    runs-on: ${{ inputs.platform }}
     steps:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v3.5.3

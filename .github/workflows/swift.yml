@@ -6,10 +6,13 @@ on:
       swift-version:
         required: true
         type: string
+      platform:
+        required: true
+        type: string
 
 jobs:
   build:
-    runs-on: macOS-latest
+    runs-on: ${{ inputs.platform }}
     name: Swift ${{ inputs.swift-version }}
     steps:
       - name: ☑️ Swift Select

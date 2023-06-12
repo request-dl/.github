@@ -1,0 +1,29 @@
+name: No API Breaking Changes
+
+on:
+  workflow_call:
+    inputs:
+      swift-version:
+        required: true
+        type: string
+      platform:
+        default: 'macOS-latest'
+        required: false
+        type: string
+
+jobs:
+  breaking-changes:
+    runs-on: ${{ inputs.platform }}
+    name: Checking API Breaking Changes
+    steps:
+      - name: ☑️ Swift Select
+        uses: swift-actions/setup-swift@v1
+        with:
+            swift-version: ${{ inputs.swift-version }}
+
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v3.5.3
+
+      - name: 💔 Checking API Breaking Changes
+        run: |
+          swift package diagnose-api-breaking-changes $(git describe --tags --abbrev=0)

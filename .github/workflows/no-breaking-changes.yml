@@ -21,9 +21,12 @@ jobs:
         with:
             swift-version: ${{ inputs.swift-version }}
 
-      - name: ⬇️ Get Sources
+      - id: get-sources
+        name: ⬇️ Get Sources
         uses: actions/checkout@v3.5.3
+        run: |
+            echo "latest-tag=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
 
       - name: 💔 Checking API Breaking Changes
         run: |
-          swift package diagnose-api-breaking-changes $(git describe --tags --abbrev=0)
+          swift package diagnose-api-breaking-changes ${{ steps.get-sources.outputs.latest-tag }}

@@ -28,4 +28,4 @@ jobs:
 
       - name: 💔 Checking API Breaking Changes
         run: |
-          swift package diagnose-api-breaking-changes $(git describe --tags --abbrev=0)
+          swift package diagnose-api-breaking-changes $(git rev-list --tags --max-count=1)

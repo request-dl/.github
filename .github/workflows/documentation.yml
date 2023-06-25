@@ -3,8 +3,8 @@ name: Documentation
 on:
   workflow_call:
     inputs:
-      xcode-version:
-        default: '14.2'
+      swift-version:
+        default: '5.7.2'
         required: false
         type: string
       target:
@@ -37,8 +37,10 @@ jobs:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v3.5.3
 
-      - name: ☑️ Xcode Select
-        run: sudo Xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
+      - name: ☑️ Swift Select
+        uses: swift-actions/setup-swift@v1
+        with:
+          swift-version: ${{ inputs.swift-version }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v3.0.6

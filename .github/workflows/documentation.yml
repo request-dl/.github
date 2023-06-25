@@ -3,8 +3,9 @@ name: Documentation
 on:
   workflow_call:
     inputs:
-      swift-version:
-        required: true
+      xcode-version:
+        default: '14.2'
+        required: false
         type: string
       target:
         required: true
@@ -36,22 +37,22 @@ jobs:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v3.5.3
 
-      - name: ☑️ Swift Select
-        uses: swift-actions/setup-swift@v1
-        with:
-            swift-version: ${{ inputs.swift-version}}
+      - name: ☑️ Xcode Select
+        run: sudo Xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
 
       - name: Setup Pages
         uses: actions/configure-pages@v3.0.6
 
-      - name: Swift DocC Action
-        uses: fwcd/swift-docc-action@v1.0.2
-        with:
-          target: ${{ inputs.target }}
-          output: ${{ inputs.output }}
-          hosting-base-path: ${{ inputs.hosting-base-path }}
-          disable-indexing: 'true'
-          transform-for-static-hosting: 'true'
+      - name: 🛠️ Build DocC
+        run: |
+          swift package \
+            --allow-writing-to-directory ${{ inputs.output }} \
+            generate-documentation \
+            --target ${{ inputs.target }} \
+            --output-path ${{ inputs.output }} \
+            --transform-for-static-hosting \
+            --disable-indexing \
+            --hosting-base-path ${{ inputs.hosting-base-path }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v1.0.9

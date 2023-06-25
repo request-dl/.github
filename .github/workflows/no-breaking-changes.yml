@@ -28,4 +28,6 @@ jobs:
 
       - name: 💔 Checking API Breaking Changes
         run: |
-          swift package diagnose-api-breaking-changes $(git rev-list --tags --max-count=1)
+          latest_tag=$(git describe --tags --abbrev=0)
+          echo "Checking breaking changes for $latest_tag"
+          swift package diagnose-api-breaking-changes $latest_tag

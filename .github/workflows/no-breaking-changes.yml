@@ -1,0 +1,32 @@
+name: No API Breaking Changes
+
+on:
+  workflow_call:
+    inputs:
+      xcode-version:
+        default: '15.0'
+        required: true
+        type: string
+      platform:
+        default: 'macOS-13'
+        required: false
+        type: string
+
+jobs:
+  breaking-changes:
+    runs-on: ${{ inputs.platform }}
+    name: Checking API Breaking Changes
+    steps:
+      - name: ☑️ Xcode Select
+        run: sudo Xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
+
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v3.5.3
+        with:
+          fetch-depth: 0
+
+      - name: 💔 Checking API Breaking Changes
+        run: |
+          latest_tag=$(git describe --tags --abbrev=0)
+          echo "Checking breaking changes for $latest_tag"
+          swift package diagnose-api-breaking-changes $latest_tag

@@ -3,11 +3,12 @@ name: No API Breaking Changes
 on:
   workflow_call:
     inputs:
-      swift-version:
+      xcode-version:
+        default: '15.0'
         required: true
         type: string
       platform:
-        default: 'macOS-latest'
+        default: 'macOS-13'
         required: false
         type: string
 
@@ -16,10 +17,8 @@ jobs:
     runs-on: ${{ inputs.platform }}
     name: Checking API Breaking Changes
     steps:
-      - name: ☑️ Swift Select
-        uses: swift-actions/setup-swift@v1
-        with:
-            swift-version: ${{ inputs.swift-version }}
+      - name: ☑️ Xcode Select
+        run: sudo Xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
 
       - name: ⬇️ Get Sources
         uses: actions/checkout@v3.5.3

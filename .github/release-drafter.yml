@@ -1,13 +1,13 @@
 categories:
+  - title: '🐞 Bugs'
+    labels:
+      - 'bug'
   - title: '🚀 Enhancements'
     labels:
       - 'enhancement'
-  - title: '🐛 Bug Fixes'
-    labels:
-      - 'bug'
   - title: '🧰 Maintenance'
     label:
-      - 'documentation'
+      - 'dependencies'
 category-template: "### $TITLE"
 template: |
   ## What’s Changed

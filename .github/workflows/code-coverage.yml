@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       xcode-version:
-        default: '14.2'
+        default: '15.2'
         required: false
         type: string
       package-tests:
@@ -14,7 +14,7 @@ on:
         required: true
         type: string
       platform:
-        default: 'macOS-latest'
+        default: 'macOS-13'
         required: false
         type: string
 

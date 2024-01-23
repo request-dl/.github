@@ -18,6 +18,6 @@ jobs:
       uses: pozil/auto-assign-issue@v1
       with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          assignees: brennobemoura,vcolen
+          assignees: o-nnerb,rodrigohtc
           numOfAssignee: 2
           allowSelfAssign: false

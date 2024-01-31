@@ -7,7 +7,7 @@ on:
         required: true
         type: string
       platform:
-        default: 'macOS-13'
+        default: 'macOS-14'
         required: false
         type: string
 

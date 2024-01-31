@@ -7,12 +7,12 @@ This is an organization on Github that houses repositories maintained by our tea
 **SwiftNIO**
 
 - [RequestDL](https://www.github.com/request-dl/request-dl-nio)
-- [OpenAPIRequestDL](https://www.github.com/request-dl/swift-openapirequest-dl-nio)
+- [OpenAPIRequestDL](https://www.github.com/request-dl/swift-openapi-request-dl-nio)
 
 **Foundation** (exclusive for Apple platforms)
 
 - [RequestDL](https://www.github.com/request-dl/request-dl-foundation)
-- [OpenAPIRequestDL](https://www.github.com/request-dl/swift-openapirequest-dl-foundation)
+- [OpenAPIRequestDL](https://www.github.com/request-dl/swift-openapi-request-dl-foundation)
 
 ## Documentation
 

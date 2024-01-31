@@ -5,7 +5,7 @@ on:
 
 jobs:
   lint:
-    runs-on: macOS-13
+    runs-on: macOS-14
     steps:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v4.0.0

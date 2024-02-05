@@ -39,7 +39,7 @@ jobs:
             -ignore-filename-regex=".build|Tests" > ${{ inputs.target }}.lcov
 
       - name: 📦 Upload to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ${{ github.workspace }}/${{ inputs.target }}.lcov

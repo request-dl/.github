@@ -23,7 +23,7 @@ jobs:
     runs-on: ${{ inputs.platform }}
     steps:
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v4.0.0
+        uses: actions/checkout@v4.2.0
 
       - name: ☑️ Xcode Select
         run: sudo Xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app

@@ -7,7 +7,7 @@ on:
         required: true
         type: string
       platform:
-        default: 'macOS-14'
+        default: 'macOS-15'
         required: false
         type: string
 
@@ -17,12 +17,12 @@ jobs:
     name: Swift ${{ inputs.swift-version }} on ${{ inputs.platform }}
     steps:
       - name: ☑️ Swift Select
-        uses: swift-actions/setup-swift@v1
+        uses: swift-actions/setup-swift@v2.3.0
         with:
             swift-version: ${{ inputs.swift-version }}
 
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v4.0.0
+        uses: actions/checkout@v5.0.0
 
       - name: 🍀 Test Package
         run: swift test

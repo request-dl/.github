@@ -20,4 +20,4 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           assignees: o-nnerb
           numOfAssignee: 1
-          allowSelfAssign: false
+          allowSelfAssign: true

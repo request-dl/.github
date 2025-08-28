@@ -15,9 +15,9 @@ jobs:
       pull-requests: write
     steps:
     - name: 'Auto-assign issue'
-      uses: pozil/auto-assign-issue@v1
+      uses: pozil/auto-assign-issue@v2.2.0
       with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          assignees: o-nnerb,rodrigohtc
-          numOfAssignee: 2
+          assignees: o-nnerb
+          numOfAssignee: 1
           allowSelfAssign: false

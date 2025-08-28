@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       xcode-version:
-        default: '15.2'
+        default: '16.4'
         required: false
         type: string
       package-tests:
@@ -14,7 +14,7 @@ on:
         required: true
         type: string
       platform:
-        default: 'macOS-14'
+        default: 'macOS-15'
         required: false
         type: string
 
@@ -23,7 +23,7 @@ jobs:
     runs-on: ${{ inputs.platform }}
     steps:
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v4.0.0
+        uses: actions/checkout@v5.0.0
 
       - name: ☑️ Xcode Select
         run: sudo Xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
@@ -39,7 +39,7 @@ jobs:
             -ignore-filename-regex=".build|Tests" > ${{ inputs.target }}.lcov
 
       - name: 📦 Upload to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5.5.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ${{ github.workspace }}/${{ inputs.target }}.lcov

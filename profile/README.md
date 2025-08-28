@@ -9,11 +9,6 @@ This is an organization on Github that houses repositories maintained by our tea
 - [RequestDL](https://www.github.com/request-dl/request-dl-nio)
 - [OpenAPIRequestDL](https://www.github.com/request-dl/swift-openapi-request-dl-nio)
 
-**Foundation** (exclusive for Apple platforms)
-
-- [RequestDL](https://www.github.com/request-dl/request-dl-foundation)
-- [OpenAPIRequestDL](https://www.github.com/request-dl/swift-openapi-request-dl-foundation)
-
 ## Documentation
 
 Documentation is available at [Swift Package Index](https://swiftpackageindex.com/request-dl) and in each repository through the README.md file.

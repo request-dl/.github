@@ -33,7 +33,7 @@ jobs:
 
       - name: 🖨️ LLVM Coverage Format
         run: |
-          xcrun llvm-cov export $(find .build -name ${{ inputs.package-tests }}) \
+          xcrun llvm-cov export $(find .build -name ${{ inputs.package-tests }} ! -path "*.dSYM*") \
             -format="lcov" \
             -instr-profile=$(find .build -name default.profdata) \
             -ignore-filename-regex=".build|Tests" > ${{ inputs.target }}.lcov

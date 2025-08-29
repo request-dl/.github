@@ -3,8 +3,8 @@ name: No API Breaking Changes
 on:
   workflow_call:
     inputs:
-      xcode-version:
-        default: '16.4'
+      swift-version:
+        default: '6.0'
         required: false
         type: string
       platform:
@@ -17,8 +17,10 @@ jobs:
     runs-on: ${{ inputs.platform }}
     name: Checking API Breaking Changes
     steps:
-      - name: ☑️ Xcode Select
-        run: sudo Xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.11.0
+        with:
+            swift-version: ${{ inputs.swift-version }}
 
       - name: ⬇️ Get Sources
         uses: actions/checkout@v5.0.0

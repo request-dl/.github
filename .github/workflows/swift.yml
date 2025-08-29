@@ -4,7 +4,8 @@ on:
   workflow_call:
     inputs:
       swift-version:
-        required: true
+        default: '6.0'
+        required: false
         type: string
       platform:
         default: 'macOS-15'

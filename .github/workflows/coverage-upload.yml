@@ -55,12 +55,13 @@ jobs:
                     # Extrair o nome base do bundle (sem .xctest)
                     BUNDLE_NAME=$(basename "$xctest_bundle" .xctest)
 
-                    # Caminho para o executável dentro do bundle
-                    EXECUTABLE_PATH="$xctest_bundle/Contents/MacOS/$BUNDLE_NAME"
+                    # Procurar o executável usando glob pattern (funciona em todas as plataformas)
+                    EXECUTABLE_PATH=$(find "$xctest_bundle" -name "$BUNDLE_NAME" -type f -not -path "*/.dSYM/*" | head -n 1)
 
                     # Verificar se o executável existe
-                    if [ -f "$EXECUTABLE_PATH" ]; then
+                    if [ -n "$EXECUTABLE_PATH" ] && [ -f "$EXECUTABLE_PATH" ]; then
                       echo "Processando cobertura para: $BUNDLE_NAME"
+                      echo "Executável encontrado em: $EXECUTABLE_PATH"
 
                       # Nome do arquivo de saída (na raiz do workspace)
                       OUTPUT_FILE="${{ github.workspace }}/${BUNDLE_NAME}.lcov"
@@ -73,7 +74,8 @@ jobs:
 
                       echo "Gerado: $OUTPUT_FILE"
                     else
-                      echo "Executável não encontrado em: $EXECUTABLE_PATH"
+                      echo "Executável não encontrado para: $BUNDLE_NAME"
+                      echo "Buscado em: $xctest_bundle"
                     fi
                   fi
                 done

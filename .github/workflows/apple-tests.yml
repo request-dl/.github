@@ -43,7 +43,7 @@ jobs:
           set -o pipefail && xcodebuild build-for-testing \
             -scheme "${{ inputs.package-name }}" \
             -destination "${{ inputs.destination }}" \
-            -derivedDataPath .xcbuild 2>&1 | xcbeautify --quiet
+            -derivedDataPath .xcbuild 2>&1 | xcbeautify --quiet --renderer github-actions
 
       - name: 🧪 Run Tests with Coverage
         env:
@@ -53,7 +53,7 @@ jobs:
             -scheme "${{ inputs.package-name }}" \
             -destination "${{ inputs.destination }}" \
             -enableCodeCoverage YES \
-            -derivedDataPath .xcbuild 2>&1 | xcbeautify
+            -derivedDataPath .xcbuild 2>&1 | xcbeautify --renderer github-actions
 
       - name: 🔍 Debug - List coverage files
         if: inputs.coverage-enabled

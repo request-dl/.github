@@ -29,16 +29,20 @@ jobs:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v5.0.0
 
+      - name: 🍺 Homebrew Dependencies
+        run: |
+          brew install xcbeautify
+
       - name: ☑️ Xcode Select
         run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
 
       - name: 🧪 Run Tests with Coverage
         run: |
-          xcodebuild test \
+          NSUnbufferedIO=YES set -o pipefail xcodebuild test \
             -scheme "${{ inputs.package-name }}" \
             -destination "${{ inputs.destination }}" \
             -enableCodeCoverage YES \
-            -derivedDataPath .xcbuild
+            -derivedDataPath .xcbuild 2>&1 | xcbeautify
 
       - name: 🔍 Debug - List coverage files
         if: inputs.coverage-enabled

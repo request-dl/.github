@@ -37,15 +37,19 @@ jobs:
         run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
 
       - name: ⚒️ Build Package
+        env:
+          NSUnbufferedIO: YES
         run: |
-          NSUnbufferedIO=YES set -o pipefail && xcodebuild build-for-testing \
+          set -o pipefail && xcodebuild build-for-testing \
             -scheme "${{ inputs.package-name }}" \
             -destination "${{ inputs.destination }}" \
             -derivedDataPath .xcbuild 2>&1 | xcbeautify --quieter
 
       - name: 🧪 Run Tests with Coverage
+        env:
+          NSUnbufferedIO: YES
         run: |
-          NSUnbufferedIO=YES set -o pipefail && xcodebuild test-without-building \
+          set -o pipefail && xcodebuild test-without-building \
             -scheme "${{ inputs.package-name }}" \
             -destination "${{ inputs.destination }}" \
             -enableCodeCoverage YES \
@@ -59,11 +63,23 @@ jobs:
           echo "=== Directory structure ==="
           find .xcbuild -type d -name "*Coverage*" -o -name "*DerivedData*" 2>/dev/null || echo "No special directories"
 
+      - name: 🔀 Move Coverage Files
+        if: inputs.coverage-enabled
+        run: |
+          mkdir -p coverage-artifacts
+
+          # Copiar todos os arquivos .profdata
+          find .xcbuild -name "*.profdata" -exec cp {} coverage-artifacts/ \; 2>/dev/null || true
+
+          # Copiar todos os arquivos .xctest (exceto os dentro de .dSYM)
+          find .xcbuild -name "*.xctest" -not -path "*/.dSYM/*" -exec cp -r {} coverage-artifacts/ \; 2>/dev/null || true
+
+          echo "=== Files moved to coverage-artifacts ==="
+          ls -la coverage-artifacts/
+
       - name: 📤 Upload Coverage Data
         if: inputs.coverage-enabled
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: ${{ inputs.destination }}
-          path: |
-            .xcbuild/**/*.profdata
-            .xcbuild/**/*.xctest
+          name: coverage-${{ inputs.destination }}
+          path: coverage-artifacts/

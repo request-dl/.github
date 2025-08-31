@@ -36,13 +36,20 @@ jobs:
       - name: ☑️ Xcode Select
         run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
 
+      - name: ⚒️ Build Package
+        run: |
+          NSUnbufferedIO=YES set -o pipefail && xcodebuild build-for-testing \
+            -scheme "${{ inputs.package-name }}" \
+            -destination "${{ inputs.destination }}" \
+            -derivedDataPath .xcbuild 2>&1 | xcbeautify --quieter
+
       - name: 🧪 Run Tests with Coverage
         run: |
-          NSUnbufferedIO=YES set -o pipefail xcodebuild test \
+          NSUnbufferedIO=YES set -o pipefail && xcodebuild test-without-building \
             -scheme "${{ inputs.package-name }}" \
             -destination "${{ inputs.destination }}" \
             -enableCodeCoverage YES \
-            -derivedDataPath .xcbuild 2>&1 | xcbeautify
+            -derivedDataPath .xcbuild 2>&1 | xcbeautify --quiet
 
       - name: 🔍 Debug - List coverage files
         if: inputs.coverage-enabled

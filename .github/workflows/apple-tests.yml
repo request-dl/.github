@@ -1,0 +1,58 @@
+name: Apple Code Tests
+
+on:
+  workflow_call:
+    inputs:
+      xcode-version:
+        default: '16.4'
+        required: false
+        type: string
+      platform:
+        default: 'macOS-15'
+        required: false
+        type: string
+      package-name:
+        required: true
+        type: string
+      destination:
+        required: true
+        type: string
+      coverage-enabled:
+        default: false
+        required: false
+        type: boolean
+
+jobs:
+  apple-tests:
+    runs-on: ${{ inputs.platform }}
+    steps:
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v5.0.0
+
+      - name: ☑️ Xcode Select
+        run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
+
+      - name: 🧪 Run Tests with Coverage
+        run: |
+          xcodebuild test \
+            -scheme "${{ inputs.package-name }}" \
+            -destination "${{ inputs.destination }}" \
+            -enableCodeCoverage YES \
+            -derivedDataPath .xcbuild
+
+      - name: 🔍 Debug - List coverage files
+        if: inputs.coverage-enabled
+        run: |
+          echo "=== Looking for coverage files ==="
+          find .xcbuild -name "*.profdata" -o -name "*.xctest" 2>/dev/null || echo "No files found"
+          echo "=== Directory structure ==="
+          find .xcbuild -type d -name "*Coverage*" -o -name "*DerivedData*" 2>/dev/null || echo "No special directories"
+
+      - name: 📤 Upload Coverage Data
+        if: inputs.coverage-enabled
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: ${{ inputs.destination }}
+          path: |
+            .xcbuild/**/*.profdata
+            .xcbuild/**/*.xctest

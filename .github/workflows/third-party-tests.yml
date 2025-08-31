@@ -1,0 +1,40 @@
+name: Third Party Tests
+
+on:
+  workflow_call:
+    inputs:
+      swift-version:
+        default: '6.1'
+        required: false
+        type: string
+      platform:
+        required: true
+        type: string
+      coverage-enabled:
+        default: false
+        required: false
+        type: boolean
+
+jobs:
+  third-party-tests:
+    runs-on: ${{ inputs.platform }}
+    steps:
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.11.0
+        with:
+          swift-version: ${{ inputs.swift-version }}
+
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v5.0.0
+
+      - name: ⚒️ Test Package
+        run: swift test --enable-code-coverage
+
+      - name: 📤 Upload Artifacts
+        if: inputs.coverage-enabled
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: coverage-${{ inputs.platform }}
+          path: |
+            .build/**/*.profdata
+            .build/**/*.xctest

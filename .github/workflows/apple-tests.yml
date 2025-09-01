@@ -1,0 +1,89 @@
+name: Apple Tests
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        required: true
+        type: string
+      xcode-version:
+        default: '16.4'
+        required: false
+        type: string
+      platform:
+        default: 'macOS-15'
+        required: false
+        type: string
+      package-name:
+        required: true
+        type: string
+      destination:
+        required: true
+        type: string
+      coverage-enabled:
+        default: false
+        required: false
+        type: boolean
+
+jobs:
+  apple-tests:
+    name: "Testing on ${{ inputs.name }}"
+    runs-on: ${{ inputs.platform }}
+    steps:
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v5.0.0
+
+      - name: 🍺 Homebrew Dependencies
+        run: |
+          brew install xcbeautify
+
+      - name: ☑️ Xcode Select
+        run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
+
+      - name: ⚒️ Build Package
+        env:
+          NSUnbufferedIO: YES
+        run: |
+          set -o pipefail && xcodebuild build-for-testing \
+            -scheme "${{ inputs.package-name }}" \
+            -destination "${{ inputs.destination }}" \
+            -derivedDataPath .xcbuild 2>&1 | xcbeautify --quiet --renderer github-actions
+
+      - name: 🧪 Run Tests with Coverage
+        env:
+          NSUnbufferedIO: YES
+        run: |
+          set -o pipefail && xcodebuild test-without-building \
+            -scheme "${{ inputs.package-name }}" \
+            -destination "${{ inputs.destination }}" \
+            -enableCodeCoverage YES \
+            -derivedDataPath .xcbuild 2>&1 | xcbeautify --renderer github-actions
+
+      - name: 🔍 Debug - List coverage files
+        if: inputs.coverage-enabled
+        run: |
+          echo "=== Looking for coverage files ==="
+          find .xcbuild -name "*.profdata" -o -name "*.xctest" 2>/dev/null || echo "No files found"
+          echo "=== Directory structure ==="
+          find .xcbuild -type d -name "*Coverage*" -o -name "*DerivedData*" 2>/dev/null || echo "No special directories"
+
+      - name: 🔀 Move Coverage Files
+        if: inputs.coverage-enabled
+        run: |
+          mkdir -p coverage-artifacts
+
+          # Copiar todos os arquivos .profdata
+          find .xcbuild -name "*.profdata" -exec cp {} coverage-artifacts/ \; 2>/dev/null || true
+
+          # Copiar todos os arquivos .xctest (exceto os dentro de .dSYM)
+          find .xcbuild -name "*.xctest" -not -path "*/.dSYM/*" -exec cp -r {} coverage-artifacts/ \; 2>/dev/null || true
+
+          echo "=== Files moved to coverage-artifacts ==="
+          ls -la coverage-artifacts/
+
+      - name: 📤 Upload Coverage Data
+        if: inputs.coverage-enabled
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: ${{ inputs.name }}
+          path: coverage-artifacts/

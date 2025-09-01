@@ -1,0 +1,102 @@
+name: Coverage Upload
+
+on:
+  workflow_call:
+    inputs:
+      xcode-version:
+        default: '16.4'
+        required: false
+        type: string
+      platform:
+        default: 'macOS-15'
+        required: false
+        type: string
+
+jobs:
+  coverage-upload:
+    runs-on: ${{ inputs.platform }}
+    steps:
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v5.0.0
+
+      - name: 📥 Download All Artifacts
+        uses: actions/download-artifact@v5.0.0
+        with:
+          path: artifacts
+
+      - name: 📁 List Downloaded Artifacts
+        run: |
+          echo "Artifacts downloaded:"
+          ls -la artifacts/
+          echo "Subdirectories:"
+          find artifacts -type d -mindepth 1 -maxdepth 1
+
+      - name: ☑️ Xcode Select
+        run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
+
+      - name: 📁 Process Coverage for Each Destination
+        run: |
+          # Iterar por cada subpasta de artefato
+          for artifact_dir in artifacts/*/; do
+            if [ -d "$artifact_dir" ]; then
+              echo "=== Processing: $artifact_dir ==="
+              (
+                cd "$artifact_dir"
+
+                # Extrair o nome do diretório (remove "artifacts/" e "/")
+                ARTIFACT_DIR_NAME=$(basename "$artifact_dir")
+
+                # Encontrar todos os arquivos .profdata
+                PROFDATA_FILES=$(find . -name "*.profdata" | head -n 1)
+                PROFDATA_FILE="$PROFDATA_FILES"
+
+                if [ -z "$PROFDATA_FILE" ]; then
+                  echo "Nenhum arquivo .profdata encontrado em $artifact_dir"
+                  exit 1
+                fi
+
+                # Encontrar todos os bundles .xctest
+                find . -name "*.xctest" -type d | while read -r xctest_bundle; do
+                  if [ -n "$xctest_bundle" ]; then
+                    # Extrair o nome base do bundle (sem .xctest)
+                    BUNDLE_NAME=$(basename "$xctest_bundle" .xctest)
+
+                    # Procurar o executável usando glob pattern (funciona em todas as plataformas)
+                    EXECUTABLE_PATH=$(find "$xctest_bundle" -name "$BUNDLE_NAME" -type f -not -path "*/.dSYM/*" | head -n 1)
+
+                    # Verificar se o executável existe
+                    if [ -n "$EXECUTABLE_PATH" ] && [ -f "$EXECUTABLE_PATH" ]; then
+                      echo "Processando cobertura para: $BUNDLE_NAME"
+                      echo "Executável encontrado em: $EXECUTABLE_PATH"
+
+                      # Nome do arquivo de saída usando MD5 do artifact directory
+                      OUTPUT_FILE="${{ github.workspace }}/${ARTIFACT_DIR_NAME}.lcov"
+
+                      # Gerar relatório de cobertura
+                      xcrun llvm-cov export "$EXECUTABLE_PATH" \
+                        -format="lcov" \
+                        -instr-profile="$PROFDATA_FILE" \
+                        -ignore-filename-regex=".build|Tests" > "$OUTPUT_FILE"
+
+                      echo "Gerado: $OUTPUT_FILE"
+                    else
+                      echo "Executável não encontrado para: $BUNDLE_NAME"
+                      echo "Buscado em: $xctest_bundle"
+                    fi
+                  fi
+                done
+              )
+            fi
+          done
+
+      - name: 📋 List Generated LCOV Files
+        run: |
+          echo "LCOV files generated:"
+          ls -la *.lcov
+
+      - name: 📦 Upload to Codecov
+        uses: codecov/codecov-action@v5.5.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: "*.lcov"
+          verbose: true

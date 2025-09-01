@@ -1,0 +1,90 @@
+name: Third Party Tests
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        required: true
+        type: string
+      swift-version:
+        default: '6.1'
+        required: false
+        type: string
+      platform:
+        required: true
+        type: string
+      coverage-enabled:
+        default: false
+        required: false
+        type: boolean
+
+jobs:
+  third-party-tests:
+    name: "Testing on ${{ inputs.name }}"
+    runs-on: ${{ inputs.platform }}
+    steps:
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.11.0
+        with:
+          swift-version: ${{ inputs.swift-version }}
+
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v5.0.0
+
+      - name: ⚒️ Test Package
+        run: swift test --enable-code-coverage
+
+      - name: 🔍 Debug - List coverage files (Unix)
+        if: inputs.coverage-enabled && (runner.os == 'Linux' || runner.os == 'macOS')
+        run: |
+          echo "=== Looking for coverage files ==="
+          find .build -name "*.profdata" -o -name "*.xctest" 2>/dev/null || echo "No files found"
+
+      - name: 🔍 Debug - List coverage files (Windows)
+        if: inputs.coverage-enabled && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "=== Looking for coverage files ==="
+          Get-ChildItem -Path .build -Recurse -Include "*.profdata", "*.xctest" -ErrorAction SilentlyContinue
+
+      - name: 🔀 Move Coverage Files (Unix)
+        if: inputs.coverage-enabled && (runner.os == 'Linux' || runner.os == 'macOS')
+        run: |
+          mkdir -p coverage-artifacts
+
+          # Copiar todos os arquivos .profdata
+          find .build -name "*.profdata" -exec cp {} coverage-artifacts/ \; 2>/dev/null || true
+
+          # Copiar todos os arquivos .xctest (exceto os dentro de .dSYM)
+          find .build -name "*.xctest" -not -path "*/.dSYM/*" -exec cp -r {} coverage-artifacts/ \; 2>/dev/null || true
+
+          echo "=== Files moved to coverage-artifacts ==="
+          ls -la coverage-artifacts/
+
+      - name: 🔀 Move Coverage Files (Windows)
+        if: inputs.coverage-enabled && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "coverage-artifacts" -Force
+
+          # Copiar todos os arquivos .profdata
+          Get-ChildItem -Path .build -Recurse -Filter "*.profdata" | ForEach-Object {
+              Copy-Item $_.FullName -Destination "coverage-artifacts" -Force
+          }
+
+          # Copiar todos os arquivos .xctest (exceto os dentro de .dSYM)
+          Get-ChildItem -Path .build -Recurse -Directory -Filter "*.xctest" | Where-Object {
+              $_.FullName -notlike "*\.dSYM\*"
+          } | ForEach-Object {
+              Copy-Item $_.FullName -Destination "coverage-artifacts" -Recurse -Force
+          }
+
+          Write-Host "=== Files moved to coverage-artifacts ==="
+          Get-ChildItem -Path "coverage-artifacts"
+
+      - name: 📤 Upload Artifacts
+        if: inputs.coverage-enabled
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: ${{ inputs.name }}
+          path: coverage-artifacts/

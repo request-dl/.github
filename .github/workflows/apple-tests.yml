@@ -1,8 +1,11 @@
-name: Apple Code Tests
+name: Apple Tests
 
 on:
   workflow_call:
     inputs:
+      name:
+        required: true
+        type: string
       xcode-version:
         default: '16.4'
         required: false
@@ -24,6 +27,7 @@ on:
 
 jobs:
   apple-tests:
+    name: "Testing on ${{ inputs.name }}"
     runs-on: ${{ inputs.platform }}
     steps:
       - name: ⬇️ Get Sources

@@ -3,6 +3,9 @@ name: Third Party Tests
 on:
   workflow_call:
     inputs:
+      name:
+        required: true
+        type: string
       swift-version:
         default: '6.1'
         required: false
@@ -17,6 +20,7 @@ on:
 
 jobs:
   third-party-tests:
+    name: "Testing on ${{ inputs.name }}"
     runs-on: ${{ inputs.platform }}
     steps:
       - name: ☑️ Swift Select

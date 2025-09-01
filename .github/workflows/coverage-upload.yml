@@ -16,6 +16,9 @@ jobs:
   coverage-upload:
     runs-on: ${{ inputs.platform }}
     steps:
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v5.0.0
+
       - name: 📥 Download All Artifacts
         uses: actions/download-artifact@v5.0.0
         with:

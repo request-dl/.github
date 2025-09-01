@@ -46,12 +46,6 @@ jobs:
                 # Extrair o nome do diretório (remove "artifacts/" e "/")
                 ARTIFACT_DIR_NAME=$(basename "$artifact_dir")
 
-                # Gerar MD5 do nome do diretório
-                ARTIFACT_MD5=$(echo -n "$ARTIFACT_DIR_NAME" | md5sum | cut -d ' ' -f1)
-
-                echo "Artifact directory: $ARTIFACT_DIR_NAME"
-                echo "MD5: $ARTIFACT_MD5"
-
                 # Encontrar todos os arquivos .profdata
                 PROFDATA_FILES=$(find . -name "*.profdata" | head -n 1)
                 PROFDATA_FILE="$PROFDATA_FILES"
@@ -76,7 +70,7 @@ jobs:
                       echo "Executável encontrado em: $EXECUTABLE_PATH"
 
                       # Nome do arquivo de saída usando MD5 do artifact directory
-                      OUTPUT_FILE="${{ github.workspace }}/${ARTIFACT_MD5}.lcov"
+                      OUTPUT_FILE="${{ github.workspace }}/${ARTIFACT_DIR_NAME}.lcov"
 
                       # Gerar relatório de cobertura
                       xcrun llvm-cov export "$EXECUTABLE_PATH" \

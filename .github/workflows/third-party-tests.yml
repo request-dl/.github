@@ -24,7 +24,7 @@ jobs:
     runs-on: ${{ inputs.platform }}
     steps:
       - name: ☑️ Swift Select
-        uses: SwiftyLab/setup-swift@v1.11.0
+        uses: SwiftyLab/setup-swift@v1.12.0
         with:
           swift-version: ${{ inputs.swift-version }}
 

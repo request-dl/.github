@@ -23,7 +23,7 @@ jobs:
             swift-version: ${{ inputs.swift-version }}
 
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v5.0.1
         with:
           fetch-depth: 0
 

@@ -31,7 +31,7 @@ jobs:
     runs-on: ${{ inputs.platform }}
     steps:
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v5.0.1
+        uses: actions/checkout@v6.0.1
 
       - name: 🍺 Homebrew Dependencies
         run: |

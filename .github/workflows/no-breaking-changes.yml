@@ -4,11 +4,11 @@ on:
   workflow_call:
     inputs:
       swift-version:
-        default: '6.0'
+        default: '6.2'
         required: false
         type: string
       platform:
-        default: 'macOS-15'
+        default: 'macOS-26'
         required: false
         type: string
 

@@ -4,11 +4,11 @@ on:
   workflow_call:
     inputs:
       xcode-version:
-        default: '16.4'
+        default: '26.2'
         required: false
         type: string
       platform:
-        default: 'macOS-15'
+        default: 'macOS-26'
         required: false
         type: string
 

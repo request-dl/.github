@@ -83,7 +83,7 @@ jobs:
 
       - name: 📤 Upload Coverage Data
         if: inputs.coverage-enabled
-        uses: actions/upload-artifact@v5.0.0
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: ${{ inputs.name }}
           path: coverage-artifacts/

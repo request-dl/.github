@@ -17,7 +17,7 @@ jobs:
     runs-on: ${{ inputs.platform }}
     steps:
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v6.0.1
+        uses: actions/checkout@v6.0.2
 
       - name: 📥 Download All Artifacts
         uses: actions/download-artifact@v7.0.0

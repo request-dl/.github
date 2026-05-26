@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       xcode-version:
-        default: '26.2'
+        default: '26.5'
         required: false
         type: string
       platform:

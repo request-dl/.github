@@ -117,12 +117,12 @@ jobs:
     runs-on: ${{ inputs.platform }}
     steps:
       - name: ☑️ Swift Select
-        uses: SwiftyLab/setup-swift@v1.12.0
+        uses: SwiftyLab/setup-swift@v1.14.0
         with:
           swift-version: ${{ inputs.swift-version }}
 
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.2
 
       - name: 🎨 Check Formatting
         run: |
@@ -148,12 +148,12 @@ jobs:
     runs-on: ${{ inputs.platform }}
     steps:
       - name: ☑️ Swift Select
-        uses: SwiftyLab/setup-swift@v1.12.0
+        uses: SwiftyLab/setup-swift@v1.14.0
         with:
           swift-version: ${{ inputs.swift-version }}
 
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
 
@@ -220,7 +220,7 @@ jobs:
     runs-on: ${{ inputs.platform }}
     steps:
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.2
 
       - name: 🍺 Homebrew Dependencies
         run: brew install xcbeautify
@@ -256,7 +256,7 @@ jobs:
 
       - name: 📤 Upload Coverage Data
         if: inputs.apple-coverage-enabled
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: apple-${{ matrix.name }}
           path: coverage-artifacts/
@@ -280,12 +280,12 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - name: ☑️ Swift Select
-        uses: SwiftyLab/setup-swift@v1.12.0
+        uses: SwiftyLab/setup-swift@v1.14.0
         with:
           swift-version: ${{ inputs.swift-version }}
 
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.2
 
       - name: ⚒️ Test Package
         run: swift test --enable-code-coverage
@@ -319,7 +319,7 @@ jobs:
 
       - name: 📤 Upload Artifacts
         if: inputs.third-party-coverage-enabled
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: third-party-${{ matrix.name }}
           path: coverage-artifacts/
@@ -336,10 +336,10 @@ jobs:
     continue-on-error: true
     steps:
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.2
 
       - name: ☑️ Swift Select
-        uses: SwiftyLab/setup-swift@v1.12.0
+        uses: SwiftyLab/setup-swift@v1.14.0
         with:
           swift-version: ${{ inputs.swift-version }}
 
@@ -365,10 +365,10 @@ jobs:
     runs-on: ${{ inputs.platform }}
     steps:
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.2
 
       - name: 📥 Download All Artifacts
-        uses: actions/download-artifact@v5.0.0
+        uses: actions/download-artifact@v7.0.0
         with:
           path: artifacts
 
@@ -416,7 +416,7 @@ jobs:
         run: ls -la *.lcov
 
       - name: 📦 Upload to Codecov
-        uses: codecov/codecov-action@v5.5.1
+        uses: codecov/codecov-action@v6.0.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: "*.lcov"

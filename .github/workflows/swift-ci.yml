@@ -155,7 +155,15 @@ jobs:
     if: |
       always() &&
       inputs.enable-breaking-changes &&
-      (needs.format-check.result == 'success' || needs.format-check.result == 'skipped')
+      !inputs.force-skip-breaking-changes &&
+      (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
+      !contains(github.event.pull_request.labels.*.name, 'major-release') &&
+      !contains(github.event.pull_request.labels.*.name, 'breaking-change') &&
+      !contains(github.event.pull_request.labels.*.name, 'release/major') &&
+      !startsWith(github.head_ref, 'release/v') &&
+      !startsWith(github.head_ref, 'v') &&
+      github.head_ref != 'major' &&
+      github.head_ref != 'next-major'
     runs-on: ${{ inputs.platform }}
     steps:
       - name: ☑️ Swift Select
@@ -169,9 +177,6 @@ jobs:
           fetch-depth: 0
 
       - name: 💔 Check API Breaking Changes
-        env:
-          PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
-          PR_BRANCH: ${{ github.head_ref }}
         run: |
           # ── Skip on push to main ────────────────────────────
           if [ "${{ github.event_name }}" != "pull_request" ]; then
@@ -179,34 +184,15 @@ jobs:
             exit 0
           fi
 
-          # ── OVERRIDE 1: Label no PR ─────────────────────────
-          if echo "$PR_LABELS" | grep -qiE '"major(-release)?|"breaking-change|"release/major'; then
-            echo "🏷️  Label de major release detectada, skipping breaking changes"
-            echo "Labels: $PR_LABELS"
-            exit 0
-          fi
-
-          # ── OVERRIDE 2: Nome da branch ──────────────────────
-          if echo "$PR_BRANCH" | grep -qE '^(release/v[0-9]|v[0-9]|major|next-major)'; then
-            echo "🌿 Branch '$PR_BRANCH' indica major release, skipping"
-            exit 0
-          fi
-
-          # ── OVERRIDE 3: Input manual ────────────────────────
-          if [ "${{ inputs.force-skip-breaking-changes }}" == "true" ]; then
-            echo "🔧 Skip forçado via input"
-            exit 0
-          fi
-
           # ── Detecção automática por major bump ──────────────
-          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -z "$latest_tag" ]; then
-            echo "No tags found, skipping"
-            exit 0
-          fi
-          echo "Latest tag: $latest_tag"
-
           if [ "${{ inputs.skip-on-major-update }}" == "true" ]; then
+            latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -z "$latest_tag" ]; then
+              echo "No tags found, skipping"
+              exit 0
+            fi
+            echo "Latest tag: $latest_tag"
+
             tag_version="${latest_tag#v}"
             latest_major=$(echo "$tag_version" | cut -d. -f1)
             current_ref="${{ github.ref_name }}"
@@ -376,16 +362,28 @@ jobs:
         with:
           swift-version: ${{ inputs.swift-version }}
 
-      - name: 📦 Install Carton
-        run: |
-          brew install swiftwasm/tap/carton
-          carton --version
+      - name: 🕸️ Setup SwiftWasm SDK
+        uses: swiftwasm/setup-swiftwasm@v2
 
       - name: 🕸️ Build for WebAssembly
-        run: carton bundle
+        run: swift build --swift-sdk wasm32-unknown-wasi
+
+      - name: 🧪 Build Tests for WebAssembly
+        run: swift build --build-tests --swift-sdk wasm32-unknown-wasi
+
+      - name: 🏃 Install Wasmtime
+        run: brew install wasmtime
 
       - name: 🧪 Run WebAssembly Tests
-        run: carton test
+        run: |
+          PACKAGE_NAME=$(basename ${{ github.workspace }})
+          TEST_BUNDLE=".build/wasm32-unknown-wasi/debug/${PACKAGE_NAME}PackageTests.wasm"
+          if [ -f "$TEST_BUNDLE" ]; then
+            wasmtime --dir . "$TEST_BUNDLE"
+          else
+            echo "Test bundle not found at $TEST_BUNDLE"
+            exit 1
+          fi
 
   # ── STEP 4 ──────────────────────────────────────────────────
   coverage-upload:

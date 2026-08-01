@@ -158,13 +158,36 @@ jobs:
           fetch-depth: 0
 
       - name: 💔 Check API Breaking Changes
+        env:
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          PR_BRANCH: ${{ github.head_ref }}
         run: |
-          # Skip on push to main (no PR context)
+          # ── Skip on push to main ────────────────────────────
           if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "Push to main detected, skipping breaking changes check"
+            echo "Push to main detected, skipping"
             exit 0
           fi
 
+          # ── OVERRIDE 1: Label no PR ─────────────────────────
+          if echo "$PR_LABELS" | grep -qiE '"major(-release)?|"breaking-change|"release/major'; then
+            echo "🏷️  Label de major release detectada, skipping breaking changes"
+            echo "Labels: $PR_LABELS"
+            exit 0
+          fi
+
+          # ── OVERRIDE 2: Nome da branch ──────────────────────
+          if echo "$PR_BRANCH" | grep -qE '^(release/v[0-9]|v[0-9]|major|next-major)'; then
+            echo "🌿 Branch '$PR_BRANCH' indica major release, skipping"
+            exit 0
+          fi
+
+          # ── OVERRIDE 3: Input manual ────────────────────────
+          if [ "${{ inputs.force-skip-breaking-changes }}" == "true" ]; then
+            echo "🔧 Skip forçado via input"
+            exit 0
+          fi
+
+          # ── Detecção automática por major bump ──────────────
           latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -z "$latest_tag" ]; then
             echo "No tags found, skipping"
@@ -172,7 +195,6 @@ jobs:
           fi
           echo "Latest tag: $latest_tag"
 
-          # Skip on major version bump
           if [ "${{ inputs.skip-on-major-update }}" == "true" ]; then
             tag_version="${latest_tag#v}"
             latest_major=$(echo "$tag_version" | cut -d. -f1)
@@ -182,7 +204,7 @@ jobs:
 
             if [[ "$latest_major" =~ ^[0-9]+$ ]] && [[ "$current_major" =~ ^[0-9]+$ ]]; then
               if [ "$latest_major" != "$current_major" ]; then
-                echo "⚠️  Major bump detected ($latest_tag → $current_ref), skipping"
+                echo "⚠️  Major bump detectado ($latest_tag → $current_ref)"
                 exit 0
               fi
             fi

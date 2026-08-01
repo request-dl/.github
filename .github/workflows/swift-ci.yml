@@ -1,0 +1,423 @@
+name: Swift CI
+
+on:
+  workflow_call:
+    inputs:
+      # ── Common ──────────────────────────────────────────────
+      name:
+        required: true
+        type: string
+      swift-version:
+        default: '6.2'
+        required: false
+        type: string
+      platform:
+        default: 'macOS-26'
+        required: false
+        type: string
+
+      # ── Step 1: Format ──────────────────────────────────────
+      enable-format:
+        description: 'Step 1 – Validate swift format'
+        default: true
+        required: false
+        type: boolean
+      format-path:
+        default: '.'
+        required: false
+        type: string
+      format-config:
+        default: '.swift-format'
+        required: false
+        type: string
+
+      # ── Step 2: Breaking Changes ────────────────────────────
+      enable-breaking-changes:
+        description: 'Step 2 – Check API breaking changes'
+        default: false
+        required: false
+        type: boolean
+      skip-on-major-update:
+        default: true
+        required: false
+        type: boolean
+
+      # ── Step 3: Apple Tests ─────────────────────────────────
+      enable-apple-tests:
+        description: 'Step 3 – Run Apple platform tests'
+        default: false
+        required: false
+        type: boolean
+      xcode-version:
+        default: '26.6'
+        required: false
+        type: string
+      package-name:
+        default: ''
+        required: false
+        type: string
+      apple-coverage-enabled:
+        default: false
+        required: false
+        type: boolean
+
+      # ── Step 3: Third Party Tests ───────────────────────────
+      enable-third-party-tests:
+        description: 'Step 3 – Run third-party platform tests'
+        default: false
+        required: false
+        type: boolean
+      third-party-coverage-enabled:
+        default: false
+        required: false
+        type: boolean
+      test-foundation-essentials:
+        default: false
+        required: false
+        type: boolean
+
+      # ── Step 3: WebAssembly ─────────────────────────────────
+      enable-wasm:
+        description: 'Step 3 – Build & test for WebAssembly (non-blocking)'
+        default: false
+        required: false
+        type: boolean
+
+      # ── Step 4: Coverage Upload ─────────────────────────────
+      enable-coverage-upload:
+        description: 'Step 4 – Upload coverage to Codecov'
+        default: false
+        required: false
+        type: boolean
+    secrets:
+      CODECOV_TOKEN:
+        required: false
+
+# ═══════════════════════════════════════════════════════════════
+#  HIERARQUIA
+#
+#  format-check
+#       │
+#       ▼
+#  breaking-changes
+#       │
+#       ├──► apple-tests (matrix)
+#       ├──► third-party-tests (matrix)
+#       └──► wasm-tests
+#                 │
+#                 ▼
+#           coverage-upload
+# ═══════════════════════════════════════════════════════════════
+
+jobs:
+  # ── STEP 1 ──────────────────────────────────────────────────
+  format-check:
+    name: "🎨 Format"
+    if: inputs.enable-format
+    runs-on: ${{ inputs.platform }}
+    steps:
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.12.0
+        with:
+          swift-version: ${{ inputs.swift-version }}
+
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v5.0.0
+
+      - name: 🎨 Check Formatting
+        run: |
+          echo "=== Running swift format lint ==="
+          if [ -f "${{ inputs.format-config }}" ]; then
+            swift format lint --strict --recursive \
+              --configuration "${{ inputs.format-config }}" \
+              "${{ inputs.format-path }}"
+          else
+            echo "⚠️  ${{ inputs.format-config }} not found, using defaults"
+            swift format lint --strict --recursive "${{ inputs.format-path }}"
+          fi
+          echo "✅ Formatting check passed"
+
+  # ── STEP 2 ──────────────────────────────────────────────────
+  breaking-changes:
+    name: "💔 Breaking Changes"
+    needs: format-check
+    if: |
+      always() &&
+      inputs.enable-breaking-changes &&
+      (needs.format-check.result == 'success' || needs.format-check.result == 'skipped')
+    runs-on: ${{ inputs.platform }}
+    steps:
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.12.0
+        with:
+          swift-version: ${{ inputs.swift-version }}
+
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v5.0.0
+        with:
+          fetch-depth: 0
+
+      - name: 💔 Check API Breaking Changes
+        run: |
+          # Skip on push to main (no PR context)
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Push to main detected, skipping breaking changes check"
+            exit 0
+          fi
+
+          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$latest_tag" ]; then
+            echo "No tags found, skipping"
+            exit 0
+          fi
+          echo "Latest tag: $latest_tag"
+
+          # Skip on major version bump
+          if [ "${{ inputs.skip-on-major-update }}" == "true" ]; then
+            tag_version="${latest_tag#v}"
+            latest_major=$(echo "$tag_version" | cut -d. -f1)
+            current_ref="${{ github.ref_name }}"
+            ref_version="${current_ref#v}"
+            current_major=$(echo "$ref_version" | cut -d. -f1)
+
+            if [[ "$latest_major" =~ ^[0-9]+$ ]] && [[ "$current_major" =~ ^[0-9]+$ ]]; then
+              if [ "$latest_major" != "$current_major" ]; then
+                echo "⚠️  Major bump detected ($latest_tag → $current_ref), skipping"
+                exit 0
+              fi
+            fi
+          fi
+
+          echo "Checking breaking changes against $latest_tag"
+          swift package diagnose-api-breaking-changes "$latest_tag"
+
+  # ── STEP 3A ─────────────────────────────────────────────────
+  apple-tests:
+    name: "🍎 ${{ matrix.name }}"
+    needs: breaking-changes
+    if: |
+      always() &&
+      inputs.enable-apple-tests &&
+      (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - destination: "platform=iOS Simulator,arch=arm64,name=iPhone 17 Pro,OS=26.5"
+            name: "iOS"
+          - destination: "platform=iOS Simulator,arch=arm64,name=iPad (A16),OS=26.5"
+            name: "iPadOS"
+          - destination: "platform=watchOS Simulator,arch=arm64,name=Apple Watch Series 11 (42mm),OS=26.5"
+            name: "watchOS"
+          - destination: "platform=tvOS Simulator,arch=arm64,name=Apple TV 4K (3rd generation) (at 1080p),OS=26.5"
+            name: "tvOS"
+          - destination: "platform=visionOS Simulator,arch=arm64,name=Apple Vision Pro,OS=26.5"
+            name: "visionOS"
+          - destination: "platform=macOS,arch=arm64,name=My Mac"
+            name: "macOS"
+          - destination: "platform=macOS,arch=arm64,variant=Mac Catalyst,name=My Mac"
+            name: "macOS Catalyst"
+    runs-on: ${{ inputs.platform }}
+    steps:
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v5.0.0
+
+      - name: 🍺 Homebrew Dependencies
+        run: brew install xcbeautify
+
+      - name: ☑️ Xcode Select
+        run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
+
+      - name: ⚒️ Build Package
+        env:
+          NSUnbufferedIO: YES
+        run: |
+          set -o pipefail && xcodebuild build-for-testing \
+            -scheme "${{ inputs.package-name }}" \
+            -destination "${{ matrix.destination }}" \
+            -derivedDataPath .xcbuild 2>&1 | xcbeautify --quiet --renderer github-actions
+
+      - name: 🧪 Run Tests with Coverage
+        env:
+          NSUnbufferedIO: YES
+        run: |
+          set -o pipefail && xcodebuild test-without-building \
+            -scheme "${{ inputs.package-name }}" \
+            -destination "${{ matrix.destination }}" \
+            -enableCodeCoverage YES \
+            -derivedDataPath .xcbuild 2>&1 | xcbeautify --renderer github-actions
+
+      - name: 🔀 Move Coverage Files
+        if: inputs.apple-coverage-enabled
+        run: |
+          mkdir -p coverage-artifacts
+          find .xcbuild -name "*.profdata" -exec cp {} coverage-artifacts/ \; 2>/dev/null || true
+          find .xcbuild -name "*.xctest" -not -path "*/.dSYM/*" -exec cp -r {} coverage-artifacts/ \; 2>/dev/null || true
+
+      - name: 📤 Upload Coverage Data
+        if: inputs.apple-coverage-enabled
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: apple-${{ matrix.name }}
+          path: coverage-artifacts/
+
+  # ── STEP 3B ─────────────────────────────────────────────────
+  third-party-tests:
+    name: "🔧 ${{ matrix.name }}"
+    needs: breaking-changes
+    if: |
+      always() &&
+      inputs.enable-third-party-tests &&
+      (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "ubuntu-latest"
+            name: "Linux"
+          # - platform: "windows-latest"
+          #   name: "Windows"
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.12.0
+        with:
+          swift-version: ${{ inputs.swift-version }}
+
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v5.0.0
+
+      - name: ⚒️ Test Package
+        run: swift test --enable-code-coverage
+
+      - name: 🧪 Test Package (FoundationEssentials)
+        if: inputs.test-foundation-essentials && (runner.os == 'Linux' || runner.os == 'Windows')
+        run: |
+          echo "=== Running tests with USE_ESSENTIALS_ONLY ==="
+          swift test --enable-code-coverage -Xswiftc -DUSE_ESSENTIALS_ONLY
+
+      - name: 🔀 Move Coverage Files (Unix)
+        if: inputs.third-party-coverage-enabled && (runner.os == 'Linux' || runner.os == 'macOS')
+        run: |
+          mkdir -p coverage-artifacts
+          find .build -name "*.profdata" -exec cp {} coverage-artifacts/ \; 2>/dev/null || true
+          find .build -name "*.xctest" -not -path "*/.dSYM/*" -exec cp -r {} coverage-artifacts/ \; 2>/dev/null || true
+
+      - name: 🔀 Move Coverage Files (Windows)
+        if: inputs.third-party-coverage-enabled && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "coverage-artifacts" -Force
+          Get-ChildItem -Path .build -Recurse -Filter "*.profdata" | ForEach-Object {
+              Copy-Item $_.FullName -Destination "coverage-artifacts" -Force
+          }
+          Get-ChildItem -Path .build -Recurse -Directory -Filter "*.xctest" | Where-Object {
+              $_.FullName -notlike "*\.dSYM\*"
+          } | ForEach-Object {
+              Copy-Item $_.FullName -Destination "coverage-artifacts" -Recurse -Force
+          }
+
+      - name: 📤 Upload Artifacts
+        if: inputs.third-party-coverage-enabled
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: third-party-${{ matrix.name }}
+          path: coverage-artifacts/
+
+  # ── STEP 3C ─────────────────────────────────────────────────
+  wasm-tests:
+    name: "🕸️ WebAssembly"
+    needs: breaking-changes
+    if: |
+      always() &&
+      inputs.enable-wasm &&
+      (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
+    runs-on: ${{ inputs.platform }}
+    continue-on-error: true
+    steps:
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v5.0.0
+
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.12.0
+        with:
+          swift-version: ${{ inputs.swift-version }}
+
+      - name: 📦 Install Carton
+        run: |
+          brew install swiftwasm/tap/carton
+          carton --version
+
+      - name: 🕸️ Build for WebAssembly
+        run: carton bundle
+
+      - name: 🧪 Run WebAssembly Tests
+        run: carton test
+
+  # ── STEP 4 ──────────────────────────────────────────────────
+  coverage-upload:
+    name: "📤 Coverage Upload"
+    needs: [apple-tests, third-party-tests]
+    if: |
+      always() &&
+      inputs.enable-coverage-upload &&
+      (needs.apple-tests.result != 'cancelled' || needs.third-party-tests.result != 'cancelled')
+    runs-on: ${{ inputs.platform }}
+    steps:
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v5.0.0
+
+      - name: 📥 Download All Artifacts
+        uses: actions/download-artifact@v5.0.0
+        with:
+          path: artifacts
+
+      - name: 📁 List Downloaded Artifacts
+        run: |
+          echo "Artifacts downloaded:"
+          ls -la artifacts/
+          find artifacts -type d -mindepth 1 -maxdepth 1
+
+      - name: ☑️ Xcode Select
+        run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
+
+      - name: 📁 Process Coverage for Each Destination
+        run: |
+          for artifact_dir in artifacts/*/; do
+            if [ -d "$artifact_dir" ]; then
+              echo "=== Processing: $artifact_dir ==="
+              (
+                cd "$artifact_dir"
+                ARTIFACT_DIR_NAME=$(basename "$artifact_dir")
+                PROFDATA_FILE=$(find . -name "*.profdata" | head -n 1)
+                if [ -z "$PROFDATA_FILE" ]; then
+                  echo "Nenhum .profdata em $artifact_dir"
+                  exit 1
+                fi
+                find . -name "*.xctest" -type d | while read -r xctest_bundle; do
+                  if [ -n "$xctest_bundle" ]; then
+                    BUNDLE_NAME=$(basename "$xctest_bundle" .xctest)
+                    EXECUTABLE_PATH=$(find "$xctest_bundle" -name "$BUNDLE_NAME" -type f -not -path "*/.dSYM/*" | head -n 1)
+                    if [ -n "$EXECUTABLE_PATH" ] && [ -f "$EXECUTABLE_PATH" ]; then
+                      OUTPUT_FILE="${{ github.workspace }}/${ARTIFACT_DIR_NAME}.lcov"
+                      xcrun llvm-cov export "$EXECUTABLE_PATH" \
+                        -format="lcov" \
+                        -instr-profile="$PROFDATA_FILE" \
+                        -ignore-filename-regex=".build|Tests" > "$OUTPUT_FILE"
+                      echo "Gerado: $OUTPUT_FILE"
+                    fi
+                  fi
+                done
+              )
+            fi
+          done
+
+      - name: 📋 List Generated LCOV Files
+        run: ls -la *.lcov
+
+      - name: 📦 Upload to Codecov
+        uses: codecov/codecov-action@v5.5.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: "*.lcov"
+          verbose: true

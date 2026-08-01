@@ -8,7 +8,13 @@ on:
         required: true
         type: string
       swift-version:
+        description: 'Swift version for compilation and tests'
         default: '6.2'
+        required: false
+        type: string
+      format-swift-version:
+        description: 'Swift version for swift-format (can use latest)'
+        default: '6.3'
         required: false
         type: string
       platform:
@@ -39,6 +45,11 @@ on:
         type: boolean
       skip-on-major-update:
         default: true
+        required: false
+        type: boolean
+      force-skip-breaking-changes:
+        description: 'Force skip breaking changes check'
+        default: false
         required: false
         type: boolean
 
@@ -119,7 +130,7 @@ jobs:
       - name: ☑️ Swift Select
         uses: SwiftyLab/setup-swift@v1.14.0
         with:
-          swift-version: ${{ inputs.swift-version }}
+          swift-version: ${{ inputs.format-swift-version }}
 
       - name: ⬇️ Get Sources
         uses: actions/checkout@v6.0.2

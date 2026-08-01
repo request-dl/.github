@@ -82,7 +82,10 @@ on:
         default: false
         required: false
         type: boolean
-      test-foundation-essentials:
+
+      # ── Step 3: Linkage Test (FoundationEssentials) ─────────
+      enable-linkage-test:
+        description: 'Step 3 – Run linkage test for FoundationEssentials (Linux only)'
         default: false
         required: false
         type: boolean
@@ -107,6 +110,7 @@ on:
 #       │
 #       ├──► apple-tests (matrix)
 #       ├──► third-party-tests (matrix)
+#       └──► linkage-test (Linux)
 #                 │
 #                 ▼
 #           coverage-upload
@@ -305,12 +309,6 @@ jobs:
       - name: ⚒️ Test Package
         run: swift test --enable-code-coverage
 
-      - name: 🧪 Test Package (FoundationEssentials)
-        if: inputs.test-foundation-essentials && (runner.os == 'Linux' || runner.os == 'Windows')
-        run: |
-          echo "=== Running tests with USE_ESSENTIALS_ONLY ==="
-          swift test --enable-code-coverage -Xswiftc -DUSE_ESSENTIALS_ONLY
-
       - name: 🔀 Move Coverage Files (Unix)
         if: inputs.third-party-coverage-enabled && (runner.os == 'Linux' || runner.os == 'macOS')
         run: |
@@ -339,10 +337,106 @@ jobs:
           name: third-party-${{ matrix.name }}
           path: coverage-artifacts/
 
+  # ── STEP 3C: Linkage Test (FoundationEssentials) ───────────
+  linkage-test:
+    name: "🔗 Linkage Test (FoundationEssentials)"
+    needs: breaking-changes
+    if: |
+      always() &&
+      inputs.enable-linkage-test &&
+      (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v6.0.2
+
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.14.0
+        with:
+          swift-version: ${{ inputs.swift-version }}
+
+      - name: 🔗 Setup Linkage Test Package
+        run: |
+          set -e
+          echo 'Setting up linkage test...'
+
+          # Create a temporary directory for the linkage test
+          mkdir -p Tests/LinkageTest/Sources
+
+          cat > Tests/LinkageTest/Package.swift << 'EOF'
+          // swift-tools-version: 6.2
+          import PackageDescription
+
+          let package = Package(
+              name: "linkageTest",
+              platforms: [.macOS(.v15)],
+              dependencies: [
+                  .package(name: "${{ inputs.name }}", path: "../.."),
+              ],
+              targets: [
+                  .executableTarget(
+                      name: "linkageTest",
+                      dependencies: [
+                          .product(name: "${{ inputs.name }}", package: "${{ inputs.name }}"),
+                      ]
+                  ),
+              ]
+          )
+          EOF
+
+          cat > Tests/LinkageTest/Sources/main.swift << 'EOF'
+          import ${{ inputs.name }}
+
+          // This executable only imports the package
+          // If the package uses Foundation (not FoundationEssentials),
+          // the binary will be linked against libFoundation.so
+          print("Linkage test executable")
+          EOF
+
+          echo 'Linkage test package created at Tests/LinkageTest/'
+          ls -la Tests/LinkageTest/
+
+      - name: ⚒️ Build Linkage Test
+        run: |
+          cd Tests/LinkageTest
+          swift build
+
+      - name: 🔍 Verify Linkage
+        run: |
+          set -e
+          cd Tests/LinkageTest
+
+          # Find the built binary
+          BINARY_PATH=$(find .build -name 'linkageTest' -type f -executable | head -n 1)
+
+          if [ -z "$BINARY_PATH" ]; then
+            echo '❌ Error: Could not find linkage test binary'
+            find .build -type f -executable 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "✅ Found binary: $BINARY_PATH"
+          echo ''
+          echo 'LDD output:'
+          ldd "$BINARY_PATH"
+          echo ''
+
+          # Check if the binary is linked against libFoundation.so
+          if ldd "$BINARY_PATH" | grep -q 'libFoundation.so'; then
+            echo '❌ FAILURE: Binary is linked against libFoundation.so'
+            echo 'This means the package uses Foundation instead of FoundationEssentials'
+            echo 'On Linux, this requires importing FoundationNetworking for URLSession APIs'
+            exit 1
+          else
+            echo '✅ SUCCESS: Binary is not linked against libFoundation.so - linkage test passed'
+            echo 'The package correctly uses FoundationEssentials'
+          fi
+
   # ── STEP 4 ──────────────────────────────────────────────────
   coverage-upload:
     name: "📤 Coverage Upload"
-    needs: [apple-tests, third-party-tests]
+    needs: [apple-tests, third-party-tests, linkage-test]
     if: |
       always() &&
       inputs.enable-coverage-upload &&

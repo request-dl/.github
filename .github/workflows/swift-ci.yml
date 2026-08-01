@@ -3,6 +3,13 @@ name: Swift CI
 on:
   workflow_call:
     inputs:
+      name:
+        description: 'Package name (repository/directory identifier)'
+        required: true
+      product-name:
+        description: 'Product name (importable library name)'
+        required: false
+        default: ''
       # ── Common ──────────────────────────────────────────────
       name:
         required: true
@@ -357,14 +364,16 @@ jobs:
           swift-version: ${{ inputs.swift-version }}
 
       - name: 🔗 Setup Linkage Test Package
+        env:
+          PKG_NAME: ${{ inputs.name }}
+          PROD_NAME: ${{ inputs.product-name != '' && inputs.product-name || inputs.name }}
         run: |
           set -e
-          echo 'Setting up linkage test...'
+          echo "Setting up linkage test for package '$PKG_NAME', product '$PROD_NAME'..."
 
-          # Create a temporary directory for the linkage test
           mkdir -p Tests/LinkageTest/Sources
 
-          cat > Tests/LinkageTest/Package.swift << 'EOF'
+          cat > Tests/LinkageTest/Package.swift << EOF
           // swift-tools-version: 6.2
           import PackageDescription
 
@@ -372,13 +381,13 @@ jobs:
               name: "linkageTest",
               platforms: [.macOS(.v15)],
               dependencies: [
-                  .package(name: "${{ inputs.name }}", path: "../.."),
+                  .package(name: "$PKG_NAME", path: "../.."),
               ],
               targets: [
                   .executableTarget(
                       name: "linkageTest",
                       dependencies: [
-                          .product(name: "${{ inputs.name }}", package: "${{ inputs.name }}"),
+                          .product(name: "$PROD_NAME", package: "$PKG_NAME"),
                       ]
                   ),
               ]

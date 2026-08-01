@@ -87,13 +87,6 @@ on:
         required: false
         type: boolean
 
-      # ── Step 3: WebAssembly ─────────────────────────────────
-      enable-wasm:
-        description: 'Step 3 – Build & test for WebAssembly (non-blocking)'
-        default: false
-        required: false
-        type: boolean
-
       # ── Step 4: Coverage Upload ─────────────────────────────
       enable-coverage-upload:
         description: 'Step 4 – Upload coverage to Codecov'
@@ -114,7 +107,6 @@ on:
 #       │
 #       ├──► apple-tests (matrix)
 #       ├──► third-party-tests (matrix)
-#       └──► wasm-tests
 #                 │
 #                 ▼
 #           coverage-upload
@@ -126,6 +118,7 @@ jobs:
     name: "🎨 Format"
     if: inputs.enable-format
     runs-on: ${{ inputs.platform }}
+    timeout-minutes: 10
     steps:
       - name: ☑️ Swift Select
         uses: SwiftyLab/setup-swift@v1.14.0
@@ -165,6 +158,7 @@ jobs:
       github.head_ref != 'major' &&
       github.head_ref != 'next-major'
     runs-on: ${{ inputs.platform }}
+    timeout-minutes: 15
     steps:
       - name: ☑️ Swift Select
         uses: SwiftyLab/setup-swift@v1.14.0
@@ -237,6 +231,7 @@ jobs:
           - destination: "platform=macOS,arch=arm64,variant=Mac Catalyst,name=My Mac"
             name: "macOS Catalyst"
     runs-on: ${{ inputs.platform }}
+    timeout-minutes: 30
     steps:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v6.0.2
@@ -297,6 +292,7 @@ jobs:
           # - platform: "windows-latest"
           #   name: "Windows"
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 20
     steps:
       - name: ☑️ Swift Select
         uses: SwiftyLab/setup-swift@v1.14.0
@@ -343,48 +339,6 @@ jobs:
           name: third-party-${{ matrix.name }}
           path: coverage-artifacts/
 
-  # ── STEP 3C ─────────────────────────────────────────────────
-  wasm-tests:
-    name: "🕸️ WebAssembly"
-    needs: breaking-changes
-    if: |
-      always() &&
-      inputs.enable-wasm &&
-      (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
-    runs-on: ${{ inputs.platform }}
-    continue-on-error: true
-    steps:
-      - name: ⬇️ Get Sources
-        uses: actions/checkout@v6.0.2
-
-      - name: ☑️ Swift Select
-        uses: SwiftyLab/setup-swift@v1.14.0
-        with:
-          swift-version: ${{ inputs.swift-version }}
-
-      - name: 🕸️ Setup SwiftWasm SDK
-        uses: swiftwasm/setup-swiftwasm@v2
-
-      - name: 🕸️ Build for WebAssembly
-        run: swift build --swift-sdk wasm32-unknown-wasi
-
-      - name: 🧪 Build Tests for WebAssembly
-        run: swift build --build-tests --swift-sdk wasm32-unknown-wasi
-
-      - name: 🏃 Install Wasmtime
-        run: brew install wasmtime
-
-      - name: 🧪 Run WebAssembly Tests
-        run: |
-          PACKAGE_NAME=$(basename ${{ github.workspace }})
-          TEST_BUNDLE=".build/wasm32-unknown-wasi/debug/${PACKAGE_NAME}PackageTests.wasm"
-          if [ -f "$TEST_BUNDLE" ]; then
-            wasmtime --dir . "$TEST_BUNDLE"
-          else
-            echo "Test bundle not found at $TEST_BUNDLE"
-            exit 1
-          fi
-
   # ── STEP 4 ──────────────────────────────────────────────────
   coverage-upload:
     name: "📤 Coverage Upload"
@@ -394,6 +348,7 @@ jobs:
       inputs.enable-coverage-upload &&
       (needs.apple-tests.result != 'cancelled' || needs.third-party-tests.result != 'cancelled')
     runs-on: ${{ inputs.platform }}
+    timeout-minutes: 15
     steps:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v6.0.2

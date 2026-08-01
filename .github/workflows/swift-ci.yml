@@ -5,12 +5,14 @@ on:
     inputs:
       # ── Common ──────────────────────────────────────────────
       name:
+        description: 'Package name (repository/directory identifier)'
         required: true
         type: string
       product-name:
         description: 'Product name (importable library name)'
-        required: false
         default: ''
+        required: false
+        type: string
       swift-version:
         description: 'Swift version for compilation and tests'
         default: '6.2'

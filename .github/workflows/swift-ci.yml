@@ -3,17 +3,14 @@ name: Swift CI
 on:
   workflow_call:
     inputs:
-      name:
-        description: 'Package name (repository/directory identifier)'
-        required: true
-      product-name:
-        description: 'Product name (importable library name)'
-        required: false
-        default: ''
       # ── Common ──────────────────────────────────────────────
       name:
         required: true
         type: string
+      product-name:
+        description: 'Product name (importable library name)'
+        required: false
+        default: ''
       swift-version:
         description: 'Swift version for compilation and tests'
         default: '6.2'

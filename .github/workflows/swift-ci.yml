@@ -217,7 +217,7 @@ jobs:
   # ── STEP 3A ─────────────────────────────────────────────────
   apple-tests:
     name: "🍎 ${{ matrix.name }}"
-    needs: breaking-changes
+    needs: [format-check, breaking-changes]
     if: |
       always() &&
       inputs.enable-apple-tests &&
@@ -288,7 +288,7 @@ jobs:
   # ── STEP 3B ─────────────────────────────────────────────────
   third-party-tests:
     name: "🔧 ${{ matrix.name }}"
-    needs: breaking-changes
+    needs: [format-check, breaking-changes]
     if: |
       always() &&
       inputs.enable-third-party-tests &&
@@ -346,7 +346,7 @@ jobs:
   # ── STEP 3C: Linkage Test (FoundationEssentials) ───────────
   linkage-test:
     name: "🔗 Linkage Test (FoundationEssentials)"
-    needs: breaking-changes
+    needs: [format-check, breaking-changes]
     if: |
       always() &&
       inputs.enable-linkage-test &&

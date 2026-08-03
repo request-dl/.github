@@ -394,7 +394,7 @@ jobs:
           EOF
 
           cat > Tests/LinkageTest/Sources/main.swift << 'EOF'
-          import ${{ inputs.name }}
+          import $PROD_NAME
 
           // This executable only imports the package
           // If the package uses Foundation (not FoundationEssentials),

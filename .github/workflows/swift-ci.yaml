@@ -393,7 +393,7 @@ jobs:
           )
           EOF
 
-          cat > Tests/LinkageTest/Sources/main.swift << 'EOF'
+          cat > Tests/LinkageTest/Sources/main.swift << EOF
           import $PROD_NAME
 
           // This executable only imports the package

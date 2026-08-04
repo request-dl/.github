@@ -143,7 +143,7 @@ jobs:
           swift-version: ${{ inputs.format-swift-version }}
 
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.1
 
       - name: 🎨 Check Formatting
         run: |
@@ -183,7 +183,7 @@ jobs:
           swift-version: ${{ inputs.swift-version }}
 
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
@@ -252,7 +252,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.1
 
       - name: 🍺 Homebrew Dependencies
         run: brew install xcbeautify
@@ -401,7 +401,7 @@ jobs:
           swift-version: ${{ inputs.swift-version }}
 
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.1
 
       - name: ⚒️ Test Package
         run: swift test --enable-code-coverage
@@ -447,7 +447,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.1
 
       - name: ☑️ Swift Select
         uses: SwiftyLab/setup-swift@v1.14.0
@@ -545,7 +545,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: ⬇️ Get Sources
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.1
 
       - name: 📥 Download All Artifacts
         uses: actions/download-artifact@v7.0.0

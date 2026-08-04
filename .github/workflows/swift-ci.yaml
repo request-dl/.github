@@ -1,0 +1,655 @@
+name: Swift CI
+
+on:
+  workflow_call:
+    inputs:
+      # ── Common ──────────────────────────────────────────────
+      name:
+        description: 'Package name (repository/directory identifier)'
+        required: true
+        type: string
+      product-name:
+        description: 'Product name (importable library name)'
+        default: ''
+        required: false
+        type: string
+      swift-version:
+        description: 'Swift version for compilation and tests'
+        default: '6.2'
+        required: false
+        type: string
+      format-swift-version:
+        description: 'Swift version for swift-format (can use latest)'
+        default: '6.3'
+        required: false
+        type: string
+      platform:
+        default: 'macOS-26'
+        required: false
+        type: string
+
+      # ── Step 1: Format ──────────────────────────────────────
+      enable-format:
+        description: 'Step 1 – Validate swift format'
+        default: true
+        required: false
+        type: boolean
+      format-path:
+        default: '.'
+        required: false
+        type: string
+      format-config:
+        default: '.swift-format'
+        required: false
+        type: string
+
+      # ── Step 2: Breaking Changes ────────────────────────────
+      enable-breaking-changes:
+        description: 'Step 2 – Check API breaking changes'
+        default: false
+        required: false
+        type: boolean
+      skip-on-major-update:
+        default: true
+        required: false
+        type: boolean
+      force-skip-breaking-changes:
+        description: 'Force skip breaking changes check'
+        default: false
+        required: false
+        type: boolean
+
+      # ── Step 3: Apple Tests ─────────────────────────────────
+      enable-apple-tests:
+        description: 'Step 3 – Run Apple platform tests'
+        default: false
+        required: false
+        type: boolean
+      xcode-version:
+        default: '26.6'
+        required: false
+        type: string
+      package-name:
+        default: ''
+        required: false
+        type: string
+      apple-coverage-enabled:
+        default: false
+        required: false
+        type: boolean
+
+      # ── Step 3: Third Party Tests ───────────────────────────
+      enable-third-party-tests:
+        description: 'Step 3 – Run third-party platform tests'
+        default: false
+        required: false
+        type: boolean
+      third-party-coverage-enabled:
+        default: false
+        required: false
+        type: boolean
+
+      # ── Step 3: Linkage Test (FoundationEssentials) ─────────
+      enable-linkage-test:
+        description: 'Step 3 – Run linkage test for FoundationEssentials (Linux only)'
+        default: false
+        required: false
+        type: boolean
+
+      # ── Step 4: Coverage Upload ─────────────────────────────
+      enable-coverage-upload:
+        description: 'Step 4 – Upload coverage to Codecov'
+        default: false
+        required: false
+        type: boolean
+    secrets:
+      CODECOV_TOKEN:
+        required: false
+
+# Cancel any in-progress or queued run for the same repo + ref when a new
+# run is triggered (e.g. new push), so stale xcodebuild/swift test
+# processes don't keep running and don't sit blocking the queue.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ═══════════════════════════════════════════════════════════════
+#  HIERARQUIA
+#
+#  format-check
+#       │
+#       ▼
+#  breaking-changes
+#       │
+#       ├──► apple-tests (matrix)
+#       ├──► third-party-tests (matrix)
+#       └──► linkage-test (Linux)
+#                 │
+#                 ▼
+#           coverage-upload
+# ═══════════════════════════════════════════════════════════════
+
+jobs:
+  # ── STEP 1 ──────────────────────────────────────────────────
+  format-check:
+    name: "🎨 Format"
+    if: inputs.enable-format
+    runs-on: ${{ inputs.platform }}
+    timeout-minutes: 10
+    steps:
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.14.0
+        with:
+          swift-version: ${{ inputs.format-swift-version }}
+
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v7.0.1
+
+      - name: 🎨 Check Formatting
+        run: |
+          echo "=== Running swift format lint ==="
+          if [ -f "${{ inputs.format-config }}" ]; then
+            swift format lint --strict --recursive \
+              --configuration "${{ inputs.format-config }}" \
+              "${{ inputs.format-path }}"
+          else
+            echo "⚠️  ${{ inputs.format-config }} not found, using defaults"
+            swift format lint --strict --recursive "${{ inputs.format-path }}"
+          fi
+          echo "✅ Formatting check passed"
+
+  # ── STEP 2 ──────────────────────────────────────────────────
+  breaking-changes:
+    name: "💔 Breaking Changes"
+    needs: format-check
+    if: |
+      always() &&
+      inputs.enable-breaking-changes &&
+      !inputs.force-skip-breaking-changes &&
+      (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
+      !contains(github.event.pull_request.labels.*.name, 'major-release') &&
+      !contains(github.event.pull_request.labels.*.name, 'breaking-change') &&
+      !contains(github.event.pull_request.labels.*.name, 'release/major') &&
+      !startsWith(github.head_ref, 'release/v') &&
+      !startsWith(github.head_ref, 'v') &&
+      github.head_ref != 'major' &&
+      github.head_ref != 'next-major'
+    runs-on: ${{ inputs.platform }}
+    timeout-minutes: 15
+    steps:
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.14.0
+        with:
+          swift-version: ${{ inputs.swift-version }}
+
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: 💔 Check API Breaking Changes
+        run: |
+          # ── Skip on push to main ────────────────────────────
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Push to main detected, skipping"
+            exit 0
+          fi
+
+          # ── Detecção automática por major bump ──────────────
+          if [ "${{ inputs.skip-on-major-update }}" == "true" ]; then
+            latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -z "$latest_tag" ]; then
+              echo "No tags found, skipping"
+              exit 0
+            fi
+            echo "Latest tag: $latest_tag"
+
+            tag_version="${latest_tag#v}"
+            latest_major=$(echo "$tag_version" | cut -d. -f1)
+            current_ref="${{ github.ref_name }}"
+            ref_version="${current_ref#v}"
+            current_major=$(echo "$ref_version" | cut -d. -f1)
+
+            if [[ "$latest_major" =~ ^[0-9]+$ ]] && [[ "$current_major" =~ ^[0-9]+$ ]]; then
+              if [ "$latest_major" != "$current_major" ]; then
+                echo "⚠️  Major bump detectado ($latest_tag → $current_ref)"
+                exit 0
+              fi
+            fi
+          fi
+
+          echo "Checking breaking changes against $latest_tag"
+          swift package diagnose-api-breaking-changes "$latest_tag"
+
+  # ── STEP 3A ─────────────────────────────────────────────────
+  apple-tests:
+    name: "🍎 ${{ matrix.name }}"
+    needs: [format-check, breaking-changes]
+    if: |
+      always() &&
+      inputs.enable-apple-tests &&
+      (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
+      (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - destination: "platform=iOS Simulator,arch=arm64,name=iPhone 17 Pro,OS=26.5"
+            name: "iOS"
+          - destination: "platform=iOS Simulator,arch=arm64,name=iPad (A16),OS=26.5"
+            name: "iPadOS"
+          - destination: "platform=watchOS Simulator,arch=arm64,name=Apple Watch Series 11 (42mm),OS=26.5"
+            name: "watchOS"
+          - destination: "platform=tvOS Simulator,arch=arm64,name=Apple TV 4K (3rd generation) (at 1080p),OS=26.5"
+            name: "tvOS"
+          - destination: "platform=visionOS Simulator,arch=arm64,name=Apple Vision Pro,OS=26.5"
+            name: "visionOS"
+          - destination: "platform=macOS,arch=arm64,name=My Mac"
+            name: "macOS"
+          - destination: "platform=macOS,arch=arm64,variant=Mac Catalyst,name=My Mac"
+            name: "macOS Catalyst"
+    runs-on: ${{ inputs.platform }}
+    timeout-minutes: 30
+    steps:
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v7.0.1
+
+      - name: 🍺 Homebrew Dependencies
+        run: brew install xcbeautify
+
+      - name: ☑️ Xcode Select
+        run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
+
+      - name: ⚒️ Build Package
+        env:
+          NSUnbufferedIO: YES
+        run: |
+          set -o pipefail && xcodebuild build-for-testing \
+            -scheme "${{ inputs.package-name }}" \
+            -destination "${{ matrix.destination }}" \
+            -derivedDataPath .xcbuild 2>&1 | xcbeautify --quiet --renderer github-actions
+
+      - name: 🧪 Run Tests with Coverage
+        env:
+          NSUnbufferedIO: YES
+        run: |
+          set -o pipefail && xcodebuild test-without-building \
+            -scheme "${{ inputs.package-name }}" \
+            -destination "${{ matrix.destination }}" \
+            -enableCodeCoverage YES \
+            -derivedDataPath .xcbuild 2>&1 | tee raw-test-output.log | xcbeautify --renderer github-actions
+
+      - name: 🚨 Identify Test Running at Crash Time
+        if: failure()
+        run: |
+          python3 - << 'PYEOF'
+          import re
+
+          # xcbeautify's pretty output doesn't survive a hard crash (e.g. a
+          # `Fatal error` trap) cleanly, making it impossible to tell which
+          # test/suite was in flight. The raw xcodebuild log captured above
+          # still has every "started"/"passed"/"failed" line, so diff those
+          # to find whatever never got a matching completion line — that's
+          # the test that was running when the process died.
+          START_RE = re.compile(r"(Test Suite|Test Case|Suite|Test)\s+['\"](.+?)['\"]\s+started")
+          END_RE = re.compile(r"(Test Suite|Test Case|Suite|Test)\s+['\"](.+?)['\"]\s+(passed|failed|skipped)")
+
+          started = {}
+          with open("raw-test-output.log") as f:
+              for line in f:
+                  m = START_RE.search(line)
+                  if m:
+                      started[(m.group(1), m.group(2))] = True
+                      continue
+                  m = END_RE.search(line)
+                  if m:
+                      started.pop((m.group(1), m.group(2)), None)
+
+          in_flight = [name for (_, name) in started]
+          if in_flight:
+              print(f"::error::Test(s) still running when the job crashed: {', '.join(in_flight)}")
+          else:
+              print("No in-flight test could be identified from the raw log "
+                    "(crash may have happened outside a test, or the log format didn't match).")
+          PYEOF
+
+      - name: 📤 Upload Raw Test Log
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: raw-test-log-${{ matrix.name }}
+          path: raw-test-output.log
+
+      - name: 🔀 Extract Coverage Report
+        if: inputs.apple-coverage-enabled
+        run: |
+          mkdir -p coverage-artifacts
+          XCRESULT_PATH=$(find .xcbuild -name "*.xcresult" -type d | head -n 1)
+          if [ -z "$XCRESULT_PATH" ]; then
+            echo "❌ No .xcresult found under .xcbuild"
+            exit 1
+          fi
+          echo "Using xcresult: $XCRESULT_PATH"
+          # Since Xcode 26, coverage data no longer sits as a loose .profdata
+          # under derived data (.xcbuild); `xccov` reads per-line coverage
+          # directly from the .xcresult bundle instead.
+          #
+          # `xccov` stages that read under $TMPDIR at a fixed path (e.g.
+          # action.xccovarchive), not a per-invocation random one. These
+          # runners are persistent self-hosted machines whose /tmp survives
+          # across jobs, so a previous job killed mid-extraction (e.g. by
+          # this workflow's cancel-in-progress concurrency group) can leave
+          # that fixed path in a corrupted state and break the *next* job's
+          # extraction with "Metadata.plist ... No such file or directory",
+          # even though that next job's own .xcresult is perfectly fine.
+          # Isolate each attempt in its own TMPDIR and retry once so stale
+          # state from an unrelated prior job can't take this job down.
+          extract_coverage() {
+            local tmp
+            tmp=$(mktemp -d)
+            TMPDIR="$tmp" xcrun xccov view --archive "$XCRESULT_PATH" > coverage-artifacts/coverage.xccov
+            local status=$?
+            rm -rf "$tmp"
+            return $status
+          }
+
+          if ! extract_coverage; then
+            echo "⚠️  xccov extraction failed, retrying with a clean temp dir..."
+            if ! extract_coverage; then
+              echo "❌ xcrun xccov view --archive failed after retry"
+              exit 1
+            fi
+          fi
+
+          # Fail fast here instead of letting an empty/missing coverage
+          # artifact surface 7 jobs later as a cryptic error in Coverage Upload.
+          if [ ! -s coverage-artifacts/coverage.xccov ]; then
+            echo "❌ coverage-artifacts/coverage.xccov is empty — coverage extraction produced no data"
+            exit 1
+          fi
+
+      - name: 📤 Upload Coverage Data
+        if: inputs.apple-coverage-enabled
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: apple-${{ matrix.name }}
+          path: coverage-artifacts/
+
+  # ── STEP 3B ─────────────────────────────────────────────────
+  third-party-tests:
+    name: "🔧 ${{ matrix.name }}"
+    needs: [format-check, breaking-changes]
+    if: |
+      always() &&
+      inputs.enable-third-party-tests &&
+      (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
+      (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "ubuntu-latest"
+            name: "Linux"
+          # - platform: "windows-latest"
+          #   name: "Windows"
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 20
+    steps:
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.14.0
+        with:
+          swift-version: ${{ inputs.swift-version }}
+
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v7.0.1
+
+      - name: ⚒️ Test Package
+        run: swift test --enable-code-coverage
+
+      - name: 🔀 Move Coverage Files (Unix)
+        if: inputs.third-party-coverage-enabled && (runner.os == 'Linux' || runner.os == 'macOS')
+        run: |
+          mkdir -p coverage-artifacts
+          find .build -name "*.profdata" -exec cp {} coverage-artifacts/ \; 2>/dev/null || true
+          find .build -name "*.xctest" -not -path "*/.dSYM/*" -exec cp -r {} coverage-artifacts/ \; 2>/dev/null || true
+
+      - name: 🔀 Move Coverage Files (Windows)
+        if: inputs.third-party-coverage-enabled && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "coverage-artifacts" -Force
+          Get-ChildItem -Path .build -Recurse -Filter "*.profdata" | ForEach-Object {
+              Copy-Item $_.FullName -Destination "coverage-artifacts" -Force
+          }
+          Get-ChildItem -Path .build -Recurse -Directory -Filter "*.xctest" | Where-Object {
+              $_.FullName -notlike "*\.dSYM\*"
+          } | ForEach-Object {
+              Copy-Item $_.FullName -Destination "coverage-artifacts" -Recurse -Force
+          }
+
+      - name: 📤 Upload Artifacts
+        if: inputs.third-party-coverage-enabled
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: third-party-${{ matrix.name }}
+          path: coverage-artifacts/
+
+  # ── STEP 3C: Linkage Test (FoundationEssentials) ───────────
+  linkage-test:
+    name: "🔗 Linkage Test (FoundationEssentials)"
+    needs: [format-check, breaking-changes]
+    if: |
+      always() &&
+      inputs.enable-linkage-test &&
+      (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
+      (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v7.0.1
+
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.14.0
+        with:
+          swift-version: ${{ inputs.swift-version }}
+
+      - name: 🔗 Setup Linkage Test Package
+        env:
+          PKG_NAME: ${{ inputs.name }}
+          PROD_NAME: ${{ inputs.product-name != '' && inputs.product-name || inputs.name }}
+        run: |
+          set -e
+          echo "Setting up linkage test for package '$PKG_NAME', product '$PROD_NAME'..."
+
+          mkdir -p Tests/LinkageTest/Sources
+
+          cat > Tests/LinkageTest/Package.swift << EOF
+          // swift-tools-version: 6.2
+          import PackageDescription
+
+          let package = Package(
+              name: "linkageTest",
+              platforms: [.macOS(.v15)],
+              dependencies: [
+                  .package(name: "$PKG_NAME", path: "../.."),
+              ],
+              targets: [
+                  .executableTarget(
+                      name: "linkageTest",
+                      dependencies: [
+                          .product(name: "$PROD_NAME", package: "$PKG_NAME"),
+                      ]
+                  ),
+              ]
+          )
+          EOF
+
+          cat > Tests/LinkageTest/Sources/main.swift << EOF
+          import $PROD_NAME
+
+          // This executable only imports the package
+          // If the package uses Foundation (not FoundationEssentials),
+          // the binary will be linked against libFoundation.so
+          print("Linkage test executable")
+          EOF
+
+          echo 'Linkage test package created at Tests/LinkageTest/'
+          ls -la Tests/LinkageTest/
+
+      - name: ⚒️ Build Linkage Test
+        run: |
+          cd Tests/LinkageTest
+          swift build
+
+      - name: 🔍 Verify Linkage
+        run: |
+          set -e
+          cd Tests/LinkageTest
+
+          # Find the built binary
+          BINARY_PATH=$(find .build -name 'linkageTest' -type f -executable | head -n 1)
+
+          if [ -z "$BINARY_PATH" ]; then
+            echo '❌ Error: Could not find linkage test binary'
+            find .build -type f -executable 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "✅ Found binary: $BINARY_PATH"
+          echo ''
+          echo 'LDD output:'
+          ldd "$BINARY_PATH"
+          echo ''
+
+          # Check if the binary is linked against libFoundation.so
+          if ldd "$BINARY_PATH" | grep -q 'libFoundation.so'; then
+            echo '❌ FAILURE: Binary is linked against libFoundation.so'
+            echo 'This means the package uses Foundation instead of FoundationEssentials'
+            echo 'On Linux, this requires importing FoundationNetworking for URLSession APIs'
+            exit 1
+          else
+            echo '✅ SUCCESS: Binary is not linked against libFoundation.so - linkage test passed'
+            echo 'The package correctly uses FoundationEssentials'
+          fi
+
+  # ── STEP 4 ──────────────────────────────────────────────────
+  coverage-upload:
+    name: "📤 Coverage Upload"
+    needs: [apple-tests, third-party-tests, linkage-test]
+    if: |
+      always() &&
+      inputs.enable-coverage-upload &&
+      (needs.apple-tests.result != 'cancelled' || needs.third-party-tests.result != 'cancelled')
+    runs-on: ${{ inputs.platform }}
+    timeout-minutes: 15
+    steps:
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v7.0.1
+
+      - name: 📥 Download All Artifacts
+        uses: actions/download-artifact@v7.0.0
+        with:
+          path: artifacts
+
+      - name: 📁 List Downloaded Artifacts
+        run: |
+          echo "Artifacts downloaded:"
+          ls -la artifacts/
+          find artifacts -type d -mindepth 1 -maxdepth 1
+
+      - name: ☑️ Xcode Select
+        run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
+
+      - name: 🛠️ Write xccov-to-lcov Converter
+        run: |
+          cat > /tmp/xccov_to_lcov.py << 'PYEOF'
+          import re
+          import sys
+
+          HEADER_RE = re.compile(r'^(.+):$')
+          DATA_RE = re.compile(r'^(\d+): (\*|\d+)$')
+
+
+          def convert(input_path, output_path):
+              current_file = None
+              lines_buffer = []
+
+              def flush(out):
+                  if current_file is None:
+                      return
+                  out.write(f"SF:{current_file}\n")
+                  for line_no, count in lines_buffer:
+                      out.write(f"DA:{line_no},{count}\n")
+                  out.write("end_of_record\n")
+
+              with open(input_path) as f, open(output_path, "w") as out:
+                  for raw_line in f:
+                      line = raw_line.rstrip("\n")
+                      if not line:
+                          continue
+                      data_match = DATA_RE.match(line)
+                      if data_match:
+                          if data_match.group(2) != "*":
+                              lines_buffer.append((int(data_match.group(1)), int(data_match.group(2))))
+                          continue
+                      header_match = HEADER_RE.match(line)
+                      if header_match:
+                          flush(out)
+                          current_file = header_match.group(1)
+                          lines_buffer = []
+                  flush(out)
+
+
+          if __name__ == "__main__":
+              convert(sys.argv[1], sys.argv[2])
+          PYEOF
+
+      - name: 📁 Process Coverage for Each Destination
+        run: |
+          for artifact_dir in artifacts/apple-*/ artifacts/third-party-*/; do
+            if [ -d "$artifact_dir" ]; then
+              echo "=== Processing: $artifact_dir ==="
+              (
+                cd "$artifact_dir"
+                ARTIFACT_DIR_NAME=$(basename "$artifact_dir")
+                OUTPUT_FILE="${{ github.workspace }}/${ARTIFACT_DIR_NAME}.lcov"
+
+                if [ -f "coverage.xccov" ]; then
+                  # Artifact from the 🍎 job (Xcode 26+): per-line coverage
+                  # extracted from the .xcresult via `xccov view --archive`.
+                  python3 /tmp/xccov_to_lcov.py coverage.xccov "$OUTPUT_FILE"
+                  echo "Generated: $OUTPUT_FILE"
+                else
+                  PROFDATA_FILE=$(find . -name "*.profdata" | head -n 1)
+                  if [ -z "$PROFDATA_FILE" ]; then
+                    echo "No coverage.xccov or .profdata found in $artifact_dir"
+                    exit 1
+                  fi
+                  find . -name "*.xctest" -type d | while read -r xctest_bundle; do
+                    if [ -n "$xctest_bundle" ]; then
+                      BUNDLE_NAME=$(basename "$xctest_bundle" .xctest)
+                      EXECUTABLE_PATH=$(find "$xctest_bundle" -name "$BUNDLE_NAME" -type f -not -path "*/.dSYM/*" | head -n 1)
+                      if [ -n "$EXECUTABLE_PATH" ] && [ -f "$EXECUTABLE_PATH" ]; then
+                        xcrun llvm-cov export "$EXECUTABLE_PATH" \
+                          -format="lcov" \
+                          -instr-profile="$PROFDATA_FILE" \
+                          -ignore-filename-regex=".build|Tests" > "$OUTPUT_FILE"
+                        echo "Generated: $OUTPUT_FILE"
+                      fi
+                    fi
+                  done
+                fi
+              )
+            fi
+          done
+
+      - name: 📋 List Generated LCOV Files
+        run: ls -la *.lcov
+
+      - name: 📦 Upload to Codecov
+        uses: codecov/codecov-action@v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: "*.lcov"
+          verbose: true

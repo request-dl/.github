@@ -277,14 +277,70 @@ jobs:
             -scheme "${{ inputs.package-name }}" \
             -destination "${{ matrix.destination }}" \
             -enableCodeCoverage YES \
-            -derivedDataPath .xcbuild 2>&1 | xcbeautify --renderer github-actions
+            -derivedDataPath .xcbuild 2>&1 | tee raw-test-output.log | xcbeautify --renderer github-actions
 
-      - name: 🔀 Move Coverage Files
+      - name: 🚨 Identify Test Running at Crash Time
+        if: failure()
+        run: |
+          python3 - << 'PYEOF'
+          import re
+
+          # xcbeautify's pretty output doesn't survive a hard crash (e.g. a
+          # `Fatal error` trap) cleanly, making it impossible to tell which
+          # test/suite was in flight. The raw xcodebuild log captured above
+          # still has every "started"/"passed"/"failed" line, so diff those
+          # to find whatever never got a matching completion line — that's
+          # the test that was running when the process died.
+          START_RE = re.compile(r"(Test Suite|Test Case|Suite|Test)\s+['\"](.+?)['\"]\s+started")
+          END_RE = re.compile(r"(Test Suite|Test Case|Suite|Test)\s+['\"](.+?)['\"]\s+(passed|failed|skipped)")
+
+          started = {}
+          with open("raw-test-output.log") as f:
+              for line in f:
+                  m = START_RE.search(line)
+                  if m:
+                      started[(m.group(1), m.group(2))] = True
+                      continue
+                  m = END_RE.search(line)
+                  if m:
+                      started.pop((m.group(1), m.group(2)), None)
+
+          in_flight = [name for (_, name) in started]
+          if in_flight:
+              print(f"::error::Test(s) still running when the job crashed: {', '.join(in_flight)}")
+          else:
+              print("No in-flight test could be identified from the raw log "
+                    "(crash may have happened outside a test, or the log format didn't match).")
+          PYEOF
+
+      - name: 📤 Upload Raw Test Log
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: raw-test-log-${{ matrix.name }}
+          path: raw-test-output.log
+
+      - name: 🔀 Extract Coverage Report
         if: inputs.apple-coverage-enabled
         run: |
           mkdir -p coverage-artifacts
-          find .xcbuild -name "*.profdata" -exec cp {} coverage-artifacts/ \; 2>/dev/null || true
-          find .xcbuild -name "*.xctest" -not -path "*/.dSYM/*" -exec cp -r {} coverage-artifacts/ \; 2>/dev/null || true
+          XCRESULT_PATH=$(find .xcbuild -name "*.xcresult" -type d | head -n 1)
+          if [ -z "$XCRESULT_PATH" ]; then
+            echo "❌ No .xcresult found under .xcbuild"
+            exit 1
+          fi
+          echo "Using xcresult: $XCRESULT_PATH"
+          # Since Xcode 26, coverage data no longer sits as a loose .profdata
+          # under derived data (.xcbuild); `xccov` reads per-line coverage
+          # directly from the .xcresult bundle instead.
+          xcrun xccov view --archive "$XCRESULT_PATH" > coverage-artifacts/coverage.xccov
+
+          # Fail fast here instead of letting an empty/missing coverage
+          # artifact surface 7 jobs later as a cryptic error in Coverage Upload.
+          if [ ! -s coverage-artifacts/coverage.xccov ]; then
+            echo "❌ coverage-artifacts/coverage.xccov is empty — coverage extraction produced no data"
+            exit 1
+          fi
 
       - name: 📤 Upload Coverage Data
         if: inputs.apple-coverage-enabled
@@ -479,6 +535,50 @@ jobs:
       - name: ☑️ Xcode Select
         run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
 
+      - name: 🛠️ Write xccov-to-lcov Converter
+        run: |
+          cat > /tmp/xccov_to_lcov.py << 'PYEOF'
+          import re
+          import sys
+
+          HEADER_RE = re.compile(r'^(.+):$')
+          DATA_RE = re.compile(r'^(\d+): (\*|\d+)$')
+
+
+          def convert(input_path, output_path):
+              current_file = None
+              lines_buffer = []
+
+              def flush(out):
+                  if current_file is None:
+                      return
+                  out.write(f"SF:{current_file}\n")
+                  for line_no, count in lines_buffer:
+                      out.write(f"DA:{line_no},{count}\n")
+                  out.write("end_of_record\n")
+
+              with open(input_path) as f, open(output_path, "w") as out:
+                  for raw_line in f:
+                      line = raw_line.rstrip("\n")
+                      if not line:
+                          continue
+                      data_match = DATA_RE.match(line)
+                      if data_match:
+                          if data_match.group(2) != "*":
+                              lines_buffer.append((int(data_match.group(1)), int(data_match.group(2))))
+                          continue
+                      header_match = HEADER_RE.match(line)
+                      if header_match:
+                          flush(out)
+                          current_file = header_match.group(1)
+                          lines_buffer = []
+                  flush(out)
+
+
+          if __name__ == "__main__":
+              convert(sys.argv[1], sys.argv[2])
+          PYEOF
+
       - name: 📁 Process Coverage for Each Destination
         run: |
           for artifact_dir in artifacts/*/; do
@@ -487,25 +587,33 @@ jobs:
               (
                 cd "$artifact_dir"
                 ARTIFACT_DIR_NAME=$(basename "$artifact_dir")
-                PROFDATA_FILE=$(find . -name "*.profdata" | head -n 1)
-                if [ -z "$PROFDATA_FILE" ]; then
-                  echo "Nenhum .profdata em $artifact_dir"
-                  exit 1
-                fi
-                find . -name "*.xctest" -type d | while read -r xctest_bundle; do
-                  if [ -n "$xctest_bundle" ]; then
-                    BUNDLE_NAME=$(basename "$xctest_bundle" .xctest)
-                    EXECUTABLE_PATH=$(find "$xctest_bundle" -name "$BUNDLE_NAME" -type f -not -path "*/.dSYM/*" | head -n 1)
-                    if [ -n "$EXECUTABLE_PATH" ] && [ -f "$EXECUTABLE_PATH" ]; then
-                      OUTPUT_FILE="${{ github.workspace }}/${ARTIFACT_DIR_NAME}.lcov"
-                      xcrun llvm-cov export "$EXECUTABLE_PATH" \
-                        -format="lcov" \
-                        -instr-profile="$PROFDATA_FILE" \
-                        -ignore-filename-regex=".build|Tests" > "$OUTPUT_FILE"
-                      echo "Gerado: $OUTPUT_FILE"
-                    fi
+                OUTPUT_FILE="${{ github.workspace }}/${ARTIFACT_DIR_NAME}.lcov"
+
+                if [ -f "coverage.xccov" ]; then
+                  # Artifact from the 🍎 job (Xcode 26+): per-line coverage
+                  # extracted from the .xcresult via `xccov view --archive`.
+                  python3 /tmp/xccov_to_lcov.py coverage.xccov "$OUTPUT_FILE"
+                  echo "Generated: $OUTPUT_FILE"
+                else
+                  PROFDATA_FILE=$(find . -name "*.profdata" | head -n 1)
+                  if [ -z "$PROFDATA_FILE" ]; then
+                    echo "No coverage.xccov or .profdata found in $artifact_dir"
+                    exit 1
                   fi
-                done
+                  find . -name "*.xctest" -type d | while read -r xctest_bundle; do
+                    if [ -n "$xctest_bundle" ]; then
+                      BUNDLE_NAME=$(basename "$xctest_bundle" .xctest)
+                      EXECUTABLE_PATH=$(find "$xctest_bundle" -name "$BUNDLE_NAME" -type f -not -path "*/.dSYM/*" | head -n 1)
+                      if [ -n "$EXECUTABLE_PATH" ] && [ -f "$EXECUTABLE_PATH" ]; then
+                        xcrun llvm-cov export "$EXECUTABLE_PATH" \
+                          -format="lcov" \
+                          -instr-profile="$PROFDATA_FILE" \
+                          -ignore-filename-regex=".build|Tests" > "$OUTPUT_FILE"
+                        echo "Generated: $OUTPUT_FILE"
+                      fi
+                    fi
+                  done
+                fi
               )
             fi
           done

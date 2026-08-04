@@ -221,6 +221,7 @@ jobs:
     if: |
       always() &&
       inputs.enable-apple-tests &&
+      (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
     strategy:
       fail-fast: false
@@ -292,6 +293,7 @@ jobs:
     if: |
       always() &&
       inputs.enable-third-party-tests &&
+      (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
     strategy:
       fail-fast: false
@@ -350,6 +352,7 @@ jobs:
     if: |
       always() &&
       inputs.enable-linkage-test &&
+      (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 10

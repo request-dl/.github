@@ -333,7 +333,33 @@ jobs:
           # Since Xcode 26, coverage data no longer sits as a loose .profdata
           # under derived data (.xcbuild); `xccov` reads per-line coverage
           # directly from the .xcresult bundle instead.
-          xcrun xccov view --archive "$XCRESULT_PATH" > coverage-artifacts/coverage.xccov
+          #
+          # `xccov` stages that read under $TMPDIR at a fixed path (e.g.
+          # action.xccovarchive), not a per-invocation random one. These
+          # runners are persistent self-hosted machines whose /tmp survives
+          # across jobs, so a previous job killed mid-extraction (e.g. by
+          # this workflow's cancel-in-progress concurrency group) can leave
+          # that fixed path in a corrupted state and break the *next* job's
+          # extraction with "Metadata.plist ... No such file or directory",
+          # even though that next job's own .xcresult is perfectly fine.
+          # Isolate each attempt in its own TMPDIR and retry once so stale
+          # state from an unrelated prior job can't take this job down.
+          extract_coverage() {
+            local tmp
+            tmp=$(mktemp -d)
+            TMPDIR="$tmp" xcrun xccov view --archive "$XCRESULT_PATH" > coverage-artifacts/coverage.xccov
+            local status=$?
+            rm -rf "$tmp"
+            return $status
+          }
+
+          if ! extract_coverage; then
+            echo "⚠️  xccov extraction failed, retrying with a clean temp dir..."
+            if ! extract_coverage; then
+              echo "❌ xcrun xccov view --archive failed after retry"
+              exit 1
+            fi
+          fi
 
           # Fail fast here instead of letting an empty/missing coverage
           # artifact surface 7 jobs later as a cryptic error in Coverage Upload.
@@ -581,7 +607,7 @@ jobs:
 
       - name: 📁 Process Coverage for Each Destination
         run: |
-          for artifact_dir in artifacts/*/; do
+          for artifact_dir in artifacts/apple-*/ artifacts/third-party-*/; do
             if [ -d "$artifact_dir" ]; then
               echo "=== Processing: $artifact_dir ==="
               (

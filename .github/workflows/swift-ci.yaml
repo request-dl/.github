@@ -330,41 +330,60 @@ jobs:
             exit 1
           fi
           echo "Using xcresult: $XCRESULT_PATH"
-          # Since Xcode 26, coverage data no longer sits as a loose .profdata
-          # under derived data (.xcbuild); `xccov` reads per-line coverage
-          # directly from the .xcresult bundle instead.
+          # Since Xcode 26, coverage data usually doesn't need a loose
+          # .profdata under derived data (.xcbuild); `xccov` can read
+          # per-line coverage directly from the .xcresult bundle instead.
+          # This is the preferred path when it works.
           #
-          # `xccov` stages that read under $TMPDIR at a fixed path (e.g.
-          # action.xccovarchive), not a per-invocation random one. These
-          # runners are persistent self-hosted machines whose /tmp survives
-          # across jobs, so a previous job killed mid-extraction (e.g. by
-          # this workflow's cancel-in-progress concurrency group) can leave
-          # that fixed path in a corrupted state and break the *next* job's
-          # extraction with "Metadata.plist ... No such file or directory",
-          # even though that next job's own .xcresult is perfectly fine.
-          # Isolate each attempt in its own TMPDIR and retry once so stale
-          # state from an unrelated prior job can't take this job down.
+          # `xccov view --archive` stages its work at a fixed path,
+          # /tmp/action.xccovarchive — not under $TMPDIR, and not a
+          # per-invocation random one. Setting TMPDIR before the command has
+          # no effect on this (confirmed locally: xccov ignores it entirely,
+          # and doesn't even touch a pre-existing /tmp/action.xccovarchive
+          # when $TMPDIR points elsewhere). On this job's runner, xccov
+          # reliably resolves to the literal /tmp, so a leftover/partial
+          # /tmp/action.xccovarchive from an earlier failed attempt *in this
+          # same job* can make a subsequent attempt fail with
+          # "Metadata.plist ... No such file or directory" even though the
+          # .xcresult itself is fine. Clear that fixed path before each
+          # attempt and retry once.
+          #
+          # xccov has also been observed to fail outright — independent of
+          # /tmp state — on destinations where the .xcresult's test action
+          # has no title ("scheme action '(null)'" in the xccov error),
+          # which so far has only been seen on native macOS / Mac Catalyst
+          # destinations. When both xccov attempts fail, fall back to the
+          # same .profdata + .xctest artifacts that third-party-tests
+          # uploads for Linux — Coverage Upload already knows how to convert
+          # that format (see the 📁 Process Coverage for Each Destination
+          # step below), so no downstream change is needed for the fallback
+          # to be picked up.
           extract_coverage() {
-            local tmp
-            tmp=$(mktemp -d)
-            TMPDIR="$tmp" xcrun xccov view --archive "$XCRESULT_PATH" > coverage-artifacts/coverage.xccov
-            local status=$?
-            rm -rf "$tmp"
-            return $status
+            rm -rf /tmp/action.xccovarchive
+            xcrun xccov view --archive "$XCRESULT_PATH" > coverage-artifacts/coverage.xccov
           }
 
           if ! extract_coverage; then
-            echo "⚠️  xccov extraction failed, retrying with a clean temp dir..."
+            echo "⚠️  xccov extraction failed, retrying after clearing /tmp/action.xccovarchive..."
             if ! extract_coverage; then
-              echo "❌ xcrun xccov view --archive failed after retry"
-              exit 1
+              echo "⚠️  xcrun xccov view --archive failed after retry — will try the .profdata fallback"
+            fi
+          fi
+
+          if [ ! -s coverage-artifacts/coverage.xccov ]; then
+            rm -f coverage-artifacts/coverage.xccov
+            PROFDATA_FILE=$(find .xcbuild -name "*.profdata" | head -n 1)
+            if [ -n "$PROFDATA_FILE" ]; then
+              echo "⚠️  Falling back to raw .profdata: $PROFDATA_FILE"
+              cp "$PROFDATA_FILE" coverage-artifacts/
+              find .xcbuild -name "*.xctest" -type d -exec cp -r {} coverage-artifacts/ \;
             fi
           fi
 
           # Fail fast here instead of letting an empty/missing coverage
           # artifact surface 7 jobs later as a cryptic error in Coverage Upload.
-          if [ ! -s coverage-artifacts/coverage.xccov ]; then
-            echo "❌ coverage-artifacts/coverage.xccov is empty — coverage extraction produced no data"
+          if [ -z "$(find coverage-artifacts -type f -print -quit)" ]; then
+            echo "❌ coverage-artifacts/ is empty — both xccov and the .profdata fallback produced no data"
             exit 1
           fi
 

@@ -167,13 +167,7 @@ jobs:
       inputs.enable-breaking-changes &&
       !inputs.force-skip-breaking-changes &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
-      !contains(github.event.pull_request.labels.*.name, 'major-release') &&
-      !contains(github.event.pull_request.labels.*.name, 'breaking-change') &&
-      !contains(github.event.pull_request.labels.*.name, 'release/major') &&
-      !startsWith(github.head_ref, 'release/v') &&
-      !startsWith(github.head_ref, 'v') &&
-      github.head_ref != 'major' &&
-      github.head_ref != 'next-major'
+      !contains(github.event.pull_request.labels.*.name, 'breaking-changes')
     runs-on: ${{ inputs.platform }}
     timeout-minutes: 15
     steps:
@@ -279,19 +273,6 @@ jobs:
             -enableCodeCoverage YES \
             -derivedDataPath .xcbuild 2>&1 | tee raw-test-output.log | xcbeautify --renderer github-actions
 
-      # TEMP DEBUG (ci-triage T1): the .profdata fallback below relies on
-      # `find .xcbuild -name "*.profdata"`, which has been observed to find
-      # nothing on the real macOS/macOS Catalyst runners even though a
-      # local repro reliably produces one. Remove this step once T1 is
-      # resolved (either the fallback is fixed or replaced).
-      - name: 🐞 [TEMP DEBUG T1] Inspect .profdata / .xcresult on disk
-        if: inputs.apple-coverage-enabled && (matrix.name == 'macOS' || matrix.name == 'macOS Catalyst')
-        run: |
-          echo "=== find .xcbuild -iname '*.profdata' -o -iname '*.xcresult' ==="
-          find .xcbuild -iname '*.profdata' -o -iname '*.xcresult'
-          echo "=== ls -laR .xcbuild/Build/ProfileData ==="
-          ls -laR .xcbuild/Build/ProfileData 2>&1 || echo "ProfileData dir não existe"
-
       - name: 🚨 Identify Test Running at Crash Time
         if: failure()
         run: |
@@ -365,12 +346,10 @@ jobs:
           # /tmp state — on destinations where the .xcresult's test action
           # has no title ("scheme action '(null)'" in the xccov error),
           # which so far has only been seen on native macOS / Mac Catalyst
-          # destinations. When both xccov attempts fail, fall back to the
-          # same .profdata + .xctest artifacts that third-party-tests
-          # uploads for Linux — Coverage Upload already knows how to convert
-          # that format (see the 📁 Process Coverage for Each Destination
-          # step below), so no downstream change is needed for the fallback
-          # to be picked up.
+          # destinations. `xccov view --archive <xcresult>` resolves "the"
+          # coverage archive inside the bundle by matching that title, so a
+          # null title breaks the lookup even though the underlying coverage
+          # data is present and intact.
           extract_coverage() {
             rm -rf /tmp/action.xccovarchive
             xcrun xccov view --archive "$XCRESULT_PATH" > coverage-artifacts/coverage.xccov
@@ -379,10 +358,45 @@ jobs:
           if ! extract_coverage; then
             echo "⚠️  xccov extraction failed, retrying after clearing /tmp/action.xccovarchive..."
             if ! extract_coverage; then
-              echo "⚠️  xcrun xccov view --archive failed after retry — will try the .profdata fallback"
+              echo "⚠️  xcrun xccov view --archive failed after retry — will try the xcresulttool export fallback"
             fi
           fi
 
+          # ci-triage T1: when the title-based lookup above fails, sidestep it
+          # by having `xcresulttool export coverage` walk the result bundle's
+          # object graph directly (no title matching) and write the raw
+          # "*_CoverageArchive" directory straight to disk. Confirmed locally
+          # that `xccov view --archive` dispatches on file extension rather
+          # than sniffing contents, so the exported directory has to be
+          # renamed to end in .xccovarchive before xccov will accept it — see
+          # ci-triage/TASKS.md T1 for the investigation behind this.
+          if [ ! -s coverage-artifacts/coverage.xccov ]; then
+            rm -f coverage-artifacts/coverage.xccov
+            rm -rf /tmp/xcresult-export
+            if xcrun xcresulttool export coverage --path "$XCRESULT_PATH" --output-path /tmp/xcresult-export; then
+              EXPORTED_ARCHIVE=$(find /tmp/xcresult-export -mindepth 1 -maxdepth 1 -name "*_CoverageArchive" -type d | head -n 1)
+              if [ -n "$EXPORTED_ARCHIVE" ]; then
+                RENAMED_ARCHIVE="/tmp/xcresult-export/exported.xccovarchive"
+                mv "$EXPORTED_ARCHIVE" "$RENAMED_ARCHIVE"
+                if xcrun xccov view --archive "$RENAMED_ARCHIVE" > coverage-artifacts/coverage.xccov; then
+                  echo "✅ Extracted coverage via the xcresulttool export fallback"
+                else
+                  echo "⚠️  xccov also failed against the exported .xccovarchive — will try the .profdata fallback"
+                  rm -f coverage-artifacts/coverage.xccov
+                fi
+              else
+                echo "⚠️  xcresulttool export coverage produced no *_CoverageArchive directory — will try the .profdata fallback"
+              fi
+            else
+              echo "⚠️  xcrun xcresulttool export coverage failed — will try the .profdata fallback"
+            fi
+          fi
+
+          # Last-resort fallback: the same .profdata + .xctest artifacts that
+          # third-party-tests uploads for Linux — Coverage Upload already
+          # knows how to convert that format (see the 📁 Process Coverage for
+          # Each Destination step below), so no downstream change is needed
+          # for the fallback to be picked up.
           if [ ! -s coverage-artifacts/coverage.xccov ]; then
             rm -f coverage-artifacts/coverage.xccov
             PROFDATA_FILE=$(find .xcbuild -name "*.profdata" | head -n 1)
@@ -393,11 +407,21 @@ jobs:
             fi
           fi
 
-          # Fail fast here instead of letting an empty/missing coverage
-          # artifact surface 7 jobs later as a cryptic error in Coverage Upload.
+          # ci-triage T2: this used to `exit 1` here, but by this point the
+          # tests themselves have already passed — only the coverage tooling
+          # failed. ci-triage T1 tried all 3 plausible extraction paths
+          # (xccov's title-based lookup, xcresulttool's object-graph export,
+          # and the raw .profdata) against this exact failure in real CI runs
+          # and confirmed it's an intermittent Xcode 26 platform bug: the
+          # coverage archive object simply isn't materialized for some test
+          # actions (content-availability still reports hasCoverage: true,
+          # but nothing can extract it). Failing the whole job — including
+          # its test results — for a coverage-tooling bug outside our control
+          # isn't the right tradeoff, so warn instead and let the job reflect
+          # the real test outcome. Coverage Upload is expected to have gaps
+          # for this destination when that happens (see ci-triage T3).
           if [ -z "$(find coverage-artifacts -type f -print -quit)" ]; then
-            echo "❌ coverage-artifacts/ is empty — both xccov and the .profdata fallback produced no data"
-            exit 1
+            echo "::warning::coverage-artifacts/ is empty for ${{ matrix.name }} — xccov, the xcresulttool export fallback, and the .profdata fallback all produced no data. Tests passed; only coverage extraction failed (likely the intermittent Xcode platform bug tracked in ci-triage/TASKS.md T1). Coverage Upload will be missing this destination."
           fi
 
       - name: 📤 Upload Coverage Data
@@ -589,6 +613,31 @@ jobs:
           echo "Artifacts downloaded:"
           ls -la artifacts/
           find artifacts -type d -mindepth 1 -maxdepth 1
+
+      - name: 🔍 Verify Apple Coverage Completeness
+        if: inputs.enable-apple-tests && inputs.apple-coverage-enabled
+        run: |
+          # ci-triage T3: apple-tests uploads one apple-<name> coverage
+          # artifact per matrix leg, but a leg can fail to produce one (e.g.
+          # the intermittent Xcode coverage bug tracked in
+          # ci-triage/TASKS.md T1, which ci-triage T2 mitigates by warning
+          # instead of failing that job) without that being visible here —
+          # this job just processes whatever apple-*/ dirs exist. Compare
+          # against the matrix's expected platform list so a missing
+          # destination shows up as a warning instead of silently reporting
+          # fewer coverage numbers to Codecov.
+          EXPECTED_PLATFORMS=("iOS" "iPadOS" "watchOS" "tvOS" "visionOS" "macOS" "macOS Catalyst")
+          MISSING=()
+          for platform in "${EXPECTED_PLATFORMS[@]}"; do
+            if [ ! -d "artifacts/apple-${platform}" ]; then
+              MISSING+=("$platform")
+            fi
+          done
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "::warning::Missing apple-tests coverage artifact(s) for: ${MISSING[*]} — that destination's apple-tests leg likely failed to extract coverage (see ci-triage/TASKS.md T1) or didn't run. Codecov numbers for those destinations will be incomplete this run."
+          else
+            echo "✅ All expected apple-tests coverage artifacts present: ${EXPECTED_PLATFORMS[*]}"
+          fi
 
       - name: ☑️ Xcode Select
         run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app

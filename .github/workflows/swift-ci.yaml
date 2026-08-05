@@ -279,6 +279,19 @@ jobs:
             -enableCodeCoverage YES \
             -derivedDataPath .xcbuild 2>&1 | tee raw-test-output.log | xcbeautify --renderer github-actions
 
+      # TEMP DEBUG (ci-triage T1): the .profdata fallback below relies on
+      # `find .xcbuild -name "*.profdata"`, which has been observed to find
+      # nothing on the real macOS/macOS Catalyst runners even though a
+      # local repro reliably produces one. Remove this step once T1 is
+      # resolved (either the fallback is fixed or replaced).
+      - name: 🐞 [TEMP DEBUG T1] Inspect .profdata / .xcresult on disk
+        if: inputs.apple-coverage-enabled && (matrix.name == 'macOS' || matrix.name == 'macOS Catalyst')
+        run: |
+          echo "=== find .xcbuild -iname '*.profdata' -o -iname '*.xcresult' ==="
+          find .xcbuild -iname '*.profdata' -o -iname '*.xcresult'
+          echo "=== ls -laR .xcbuild/Build/ProfileData ==="
+          ls -laR .xcbuild/Build/ProfileData 2>&1 || echo "ProfileData dir não existe"
+
       - name: 🚨 Identify Test Running at Crash Time
         if: failure()
         run: |

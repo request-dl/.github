@@ -285,6 +285,13 @@ jobs:
           find .xcbuild -iname '*.profdata' -o -iname '*.xcresult'
           echo "=== ls -laR .xcbuild/Build/ProfileData ==="
           ls -laR .xcbuild/Build/ProfileData 2>&1 || echo "ProfileData dir não existe"
+          echo "=== xcrun xcresulttool get content-availability ==="
+          XCRESULT_PATH=$(find .xcbuild -name "*.xcresult" -type d | head -n 1)
+          if [ -n "$XCRESULT_PATH" ]; then
+            xcrun xcresulttool get content-availability --path "$XCRESULT_PATH" 2>&1
+          else
+            echo "no .xcresult found, skipping"
+          fi
 
       - name: 🚨 Identify Test Running at Crash Time
         if: failure()
@@ -386,7 +393,17 @@ jobs:
           if [ ! -s coverage-artifacts/coverage.xccov ]; then
             rm -f coverage-artifacts/coverage.xccov
             rm -rf /tmp/xcresult-export
-            if xcrun xcresulttool export coverage --path "$XCRESULT_PATH" --output-path /tmp/xcresult-export; then
+            EXPORT_OK=0
+            xcrun xcresulttool export coverage --path "$XCRESULT_PATH" --output-path /tmp/xcresult-export || EXPORT_OK=$?
+            # ci-triage T1 (debug): print exactly what got written, regardless
+            # of whether the glob below finds a match — the CI run of
+            # 2026-08-05T10:56-11:07Z showed "Exported 1 object" / "Exported 0
+            # objects" with no *_CoverageArchive match afterwards, and we don't
+            # yet know which of the two expected objects (Archive vs Report)
+            # that "1 object" actually was. Remove once that's answered.
+            echo "=== [TEMP DEBUG T1] find /tmp/xcresult-export -mindepth 1 ==="
+            find /tmp/xcresult-export -mindepth 1 2>&1 || echo "/tmp/xcresult-export does not exist"
+            if [ "$EXPORT_OK" -eq 0 ]; then
               EXPORTED_ARCHIVE=$(find /tmp/xcresult-export -mindepth 1 -maxdepth 1 -name "*_CoverageArchive" -type d | head -n 1)
               if [ -n "$EXPORTED_ARCHIVE" ]; then
                 RENAMED_ARCHIVE="/tmp/xcresult-export/exported.xccovarchive"

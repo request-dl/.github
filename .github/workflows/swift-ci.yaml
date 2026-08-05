@@ -365,12 +365,10 @@ jobs:
           # /tmp state — on destinations where the .xcresult's test action
           # has no title ("scheme action '(null)'" in the xccov error),
           # which so far has only been seen on native macOS / Mac Catalyst
-          # destinations. When both xccov attempts fail, fall back to the
-          # same .profdata + .xctest artifacts that third-party-tests
-          # uploads for Linux — Coverage Upload already knows how to convert
-          # that format (see the 📁 Process Coverage for Each Destination
-          # step below), so no downstream change is needed for the fallback
-          # to be picked up.
+          # destinations. `xccov view --archive <xcresult>` resolves "the"
+          # coverage archive inside the bundle by matching that title, so a
+          # null title breaks the lookup even though the underlying coverage
+          # data is present and intact.
           extract_coverage() {
             rm -rf /tmp/action.xccovarchive
             xcrun xccov view --archive "$XCRESULT_PATH" > coverage-artifacts/coverage.xccov
@@ -379,10 +377,45 @@ jobs:
           if ! extract_coverage; then
             echo "⚠️  xccov extraction failed, retrying after clearing /tmp/action.xccovarchive..."
             if ! extract_coverage; then
-              echo "⚠️  xcrun xccov view --archive failed after retry — will try the .profdata fallback"
+              echo "⚠️  xcrun xccov view --archive failed after retry — will try the xcresulttool export fallback"
             fi
           fi
 
+          # ci-triage T1: when the title-based lookup above fails, sidestep it
+          # by having `xcresulttool export coverage` walk the result bundle's
+          # object graph directly (no title matching) and write the raw
+          # "*_CoverageArchive" directory straight to disk. Confirmed locally
+          # that `xccov view --archive` dispatches on file extension rather
+          # than sniffing contents, so the exported directory has to be
+          # renamed to end in .xccovarchive before xccov will accept it — see
+          # ci-triage/TASKS.md T1 for the investigation behind this.
+          if [ ! -s coverage-artifacts/coverage.xccov ]; then
+            rm -f coverage-artifacts/coverage.xccov
+            rm -rf /tmp/xcresult-export
+            if xcrun xcresulttool export coverage --path "$XCRESULT_PATH" --output-path /tmp/xcresult-export; then
+              EXPORTED_ARCHIVE=$(find /tmp/xcresult-export -mindepth 1 -maxdepth 1 -name "*_CoverageArchive" -type d | head -n 1)
+              if [ -n "$EXPORTED_ARCHIVE" ]; then
+                RENAMED_ARCHIVE="/tmp/xcresult-export/exported.xccovarchive"
+                mv "$EXPORTED_ARCHIVE" "$RENAMED_ARCHIVE"
+                if xcrun xccov view --archive "$RENAMED_ARCHIVE" > coverage-artifacts/coverage.xccov; then
+                  echo "✅ Extracted coverage via the xcresulttool export fallback"
+                else
+                  echo "⚠️  xccov also failed against the exported .xccovarchive — will try the .profdata fallback"
+                  rm -f coverage-artifacts/coverage.xccov
+                fi
+              else
+                echo "⚠️  xcresulttool export coverage produced no *_CoverageArchive directory — will try the .profdata fallback"
+              fi
+            else
+              echo "⚠️  xcrun xcresulttool export coverage failed — will try the .profdata fallback"
+            fi
+          fi
+
+          # Last-resort fallback: the same .profdata + .xctest artifacts that
+          # third-party-tests uploads for Linux — Coverage Upload already
+          # knows how to convert that format (see the 📁 Process Coverage for
+          # Each Destination step below), so no downstream change is needed
+          # for the fallback to be picked up.
           if [ ! -s coverage-artifacts/coverage.xccov ]; then
             rm -f coverage-artifacts/coverage.xccov
             PROFDATA_FILE=$(find .xcbuild -name "*.profdata" | head -n 1)
@@ -396,7 +429,7 @@ jobs:
           # Fail fast here instead of letting an empty/missing coverage
           # artifact surface 7 jobs later as a cryptic error in Coverage Upload.
           if [ -z "$(find coverage-artifacts -type f -print -quit)" ]; then
-            echo "❌ coverage-artifacts/ is empty — both xccov and the .profdata fallback produced no data"
+            echo "❌ coverage-artifacts/ is empty — xccov, the xcresulttool export fallback, and the .profdata fallback all produced no data"
             exit 1
           fi
 

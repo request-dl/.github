@@ -273,26 +273,6 @@ jobs:
             -enableCodeCoverage YES \
             -derivedDataPath .xcbuild 2>&1 | tee raw-test-output.log | xcbeautify --renderer github-actions
 
-      # TEMP DEBUG (ci-triage T1): the .profdata fallback below relies on
-      # `find .xcbuild -name "*.profdata"`, which has been observed to find
-      # nothing on the real macOS/macOS Catalyst runners even though a
-      # local repro reliably produces one. Remove this step once T1 is
-      # resolved (either the fallback is fixed or replaced).
-      - name: 🐞 [TEMP DEBUG T1] Inspect .profdata / .xcresult on disk
-        if: inputs.apple-coverage-enabled && (matrix.name == 'macOS' || matrix.name == 'macOS Catalyst')
-        run: |
-          echo "=== find .xcbuild -iname '*.profdata' -o -iname '*.xcresult' ==="
-          find .xcbuild -iname '*.profdata' -o -iname '*.xcresult'
-          echo "=== ls -laR .xcbuild/Build/ProfileData ==="
-          ls -laR .xcbuild/Build/ProfileData 2>&1 || echo "ProfileData dir não existe"
-          echo "=== xcrun xcresulttool get content-availability ==="
-          XCRESULT_PATH=$(find .xcbuild -name "*.xcresult" -type d | head -n 1)
-          if [ -n "$XCRESULT_PATH" ]; then
-            xcrun xcresulttool get content-availability --path "$XCRESULT_PATH" 2>&1
-          else
-            echo "no .xcresult found, skipping"
-          fi
-
       - name: 🚨 Identify Test Running at Crash Time
         if: failure()
         run: |
@@ -393,17 +373,7 @@ jobs:
           if [ ! -s coverage-artifacts/coverage.xccov ]; then
             rm -f coverage-artifacts/coverage.xccov
             rm -rf /tmp/xcresult-export
-            EXPORT_OK=0
-            xcrun xcresulttool export coverage --path "$XCRESULT_PATH" --output-path /tmp/xcresult-export || EXPORT_OK=$?
-            # ci-triage T1 (debug): print exactly what got written, regardless
-            # of whether the glob below finds a match — the CI run of
-            # 2026-08-05T10:56-11:07Z showed "Exported 1 object" / "Exported 0
-            # objects" with no *_CoverageArchive match afterwards, and we don't
-            # yet know which of the two expected objects (Archive vs Report)
-            # that "1 object" actually was. Remove once that's answered.
-            echo "=== [TEMP DEBUG T1] find /tmp/xcresult-export -mindepth 1 ==="
-            find /tmp/xcresult-export -mindepth 1 2>&1 || echo "/tmp/xcresult-export does not exist"
-            if [ "$EXPORT_OK" -eq 0 ]; then
+            if xcrun xcresulttool export coverage --path "$XCRESULT_PATH" --output-path /tmp/xcresult-export; then
               EXPORTED_ARCHIVE=$(find /tmp/xcresult-export -mindepth 1 -maxdepth 1 -name "*_CoverageArchive" -type d | head -n 1)
               if [ -n "$EXPORTED_ARCHIVE" ]; then
                 RENAMED_ARCHIVE="/tmp/xcresult-export/exported.xccovarchive"
@@ -437,11 +407,21 @@ jobs:
             fi
           fi
 
-          # Fail fast here instead of letting an empty/missing coverage
-          # artifact surface 7 jobs later as a cryptic error in Coverage Upload.
+          # ci-triage T2: this used to `exit 1` here, but by this point the
+          # tests themselves have already passed — only the coverage tooling
+          # failed. ci-triage T1 tried all 3 plausible extraction paths
+          # (xccov's title-based lookup, xcresulttool's object-graph export,
+          # and the raw .profdata) against this exact failure in real CI runs
+          # and confirmed it's an intermittent Xcode 26 platform bug: the
+          # coverage archive object simply isn't materialized for some test
+          # actions (content-availability still reports hasCoverage: true,
+          # but nothing can extract it). Failing the whole job — including
+          # its test results — for a coverage-tooling bug outside our control
+          # isn't the right tradeoff, so warn instead and let the job reflect
+          # the real test outcome. Coverage Upload is expected to have gaps
+          # for this destination when that happens (see ci-triage T3).
           if [ -z "$(find coverage-artifacts -type f -print -quit)" ]; then
-            echo "❌ coverage-artifacts/ is empty — xccov, the xcresulttool export fallback, and the .profdata fallback all produced no data"
-            exit 1
+            echo "::warning::coverage-artifacts/ is empty for ${{ matrix.name }} — xccov, the xcresulttool export fallback, and the .profdata fallback all produced no data. Tests passed; only coverage extraction failed (likely the intermittent Xcode platform bug tracked in ci-triage/TASKS.md T1). Coverage Upload will be missing this destination."
           fi
 
       - name: 📤 Upload Coverage Data

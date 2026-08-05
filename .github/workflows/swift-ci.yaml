@@ -167,11 +167,7 @@ jobs:
       inputs.enable-breaking-changes &&
       !inputs.force-skip-breaking-changes &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
-      !contains(github.event.pull_request.labels.*.name, 'breaking-changes') &&
-      !startsWith(github.head_ref, 'release/v') &&
-      !startsWith(github.head_ref, 'v') &&
-      github.head_ref != 'major' &&
-      github.head_ref != 'next-major'
+      !contains(github.event.pull_request.labels.*.name, 'breaking-changes')
     runs-on: ${{ inputs.platform }}
     timeout-minutes: 15
     steps:

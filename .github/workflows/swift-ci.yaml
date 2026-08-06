@@ -362,14 +362,13 @@ jobs:
             fi
           fi
 
-          # ci-triage T1: when the title-based lookup above fails, sidestep it
-          # by having `xcresulttool export coverage` walk the result bundle's
-          # object graph directly (no title matching) and write the raw
+          # When the title-based lookup above fails, sidestep it by having
+          # `xcresulttool export coverage` walk the result bundle's object
+          # graph directly (no title matching) and write the raw
           # "*_CoverageArchive" directory straight to disk. Confirmed locally
           # that `xccov view --archive` dispatches on file extension rather
           # than sniffing contents, so the exported directory has to be
-          # renamed to end in .xccovarchive before xccov will accept it — see
-          # ci-triage/TASKS.md T1 for the investigation behind this.
+          # renamed to end in .xccovarchive before xccov will accept it.
           if [ ! -s coverage-artifacts/coverage.xccov ]; then
             rm -f coverage-artifacts/coverage.xccov
             rm -rf /tmp/xcresult-export
@@ -407,11 +406,11 @@ jobs:
             fi
           fi
 
-          # ci-triage T2: this used to `exit 1` here, but by this point the
-          # tests themselves have already passed — only the coverage tooling
-          # failed. ci-triage T1 tried all 3 plausible extraction paths
-          # (xccov's title-based lookup, xcresulttool's object-graph export,
-          # and the raw .profdata) against this exact failure in real CI runs
+          # This used to `exit 1` here, but by this point the tests
+          # themselves have already passed — only the coverage tooling
+          # failed. All 3 plausible extraction paths (xccov's title-based
+          # lookup, xcresulttool's object-graph export, and the raw
+          # .profdata) were tried against this exact failure in real CI runs
           # and confirmed it's an intermittent Xcode 26 platform bug: the
           # coverage archive object simply isn't materialized for some test
           # actions (content-availability still reports hasCoverage: true,
@@ -419,9 +418,9 @@ jobs:
           # its test results — for a coverage-tooling bug outside our control
           # isn't the right tradeoff, so warn instead and let the job reflect
           # the real test outcome. Coverage Upload is expected to have gaps
-          # for this destination when that happens (see ci-triage T3).
+          # for this destination when that happens.
           if [ -z "$(find coverage-artifacts -type f -print -quit)" ]; then
-            echo "::warning::coverage-artifacts/ is empty for ${{ matrix.name }} — xccov, the xcresulttool export fallback, and the .profdata fallback all produced no data. Tests passed; only coverage extraction failed (likely the intermittent Xcode platform bug tracked in ci-triage/TASKS.md T1). Coverage Upload will be missing this destination."
+            echo "::warning::coverage-artifacts/ is empty for ${{ matrix.name }} — xccov, the xcresulttool export fallback, and the .profdata fallback all produced no data. Tests passed; only coverage extraction failed (likely an intermittent Xcode platform bug). Coverage Upload will be missing this destination."
           fi
 
       - name: 📤 Upload Coverage Data
@@ -617,15 +616,14 @@ jobs:
       - name: 🔍 Verify Apple Coverage Completeness
         if: inputs.enable-apple-tests && inputs.apple-coverage-enabled
         run: |
-          # ci-triage T3: apple-tests uploads one apple-<name> coverage
-          # artifact per matrix leg, but a leg can fail to produce one (e.g.
-          # the intermittent Xcode coverage bug tracked in
-          # ci-triage/TASKS.md T1, which ci-triage T2 mitigates by warning
-          # instead of failing that job) without that being visible here —
-          # this job just processes whatever apple-*/ dirs exist. Compare
-          # against the matrix's expected platform list so a missing
-          # destination shows up as a warning instead of silently reporting
-          # fewer coverage numbers to Codecov.
+          # apple-tests uploads one apple-<name> coverage artifact per
+          # matrix leg, but a leg can fail to produce one (e.g. an
+          # intermittent Xcode coverage bug, mitigated by warning instead of
+          # failing that job) without that being visible here — this job
+          # just processes whatever apple-*/ dirs exist. Compare against the
+          # matrix's expected platform list so a missing destination shows
+          # up as a warning instead of silently reporting fewer coverage
+          # numbers to Codecov.
           EXPECTED_PLATFORMS=("iOS" "iPadOS" "watchOS" "tvOS" "visionOS" "macOS" "macOS Catalyst")
           MISSING=()
           for platform in "${EXPECTED_PLATFORMS[@]}"; do
@@ -634,7 +632,7 @@ jobs:
             fi
           done
           if [ ${#MISSING[@]} -gt 0 ]; then
-            echo "::warning::Missing apple-tests coverage artifact(s) for: ${MISSING[*]} — that destination's apple-tests leg likely failed to extract coverage (see ci-triage/TASKS.md T1) or didn't run. Codecov numbers for those destinations will be incomplete this run."
+            echo "::warning::Missing apple-tests coverage artifact(s) for: ${MISSING[*]} — that destination's apple-tests leg likely failed to extract coverage or didn't run. Codecov numbers for those destinations will be incomplete this run."
           else
             echo "✅ All expected apple-tests coverage artifacts present: ${EXPECTED_PLATFORMS[*]}"
           fi

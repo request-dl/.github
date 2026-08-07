@@ -285,18 +285,31 @@ jobs:
           # still has every "started"/"passed"/"failed" line, so diff those
           # to find whatever never got a matching completion line — that's
           # the test that was running when the process died.
-          START_RE = re.compile(r"(Test Suite|Test Case|Suite|Test)\s+['\"](.+?)['\"]\s+started")
-          END_RE = re.compile(r"(Test Suite|Test Case|Suite|Test)\s+['\"](.+?)['\"]\s+(passed|failed|skipped)")
+          #
+          # swift-testing (what this repo's suites actually use) prints names
+          # unquoted, e.g. `Suite CachedRequestTests started.` and
+          # `Test someTest() passed after 0.012 seconds.` — the legacy XCTest
+          # phrasing (`Test Case '-[Foo bar]' passed (0.001 seconds)`) always
+          # quotes the name. Quotes are optional here so both survive.
+          START_RE = re.compile(r"\b(Test Suite|Test Case|Suite|Test)\s+['\"]?(.+?)['\"]?\s+started\b")
+          END_RE = re.compile(r"\b(Test Suite|Test Case|Suite|Test)\s+['\"]?(.+?)['\"]?\s+(passed|failed|skipped)\b")
+
+          def is_real_entry(kind, name):
+              # swift-testing's top-level "Test run started." / "Test run
+              # with N tests passed after Xs." lines aren't a real test —
+              # they'd otherwise match as a "Test" named "run" that never
+              # closes. Real test identifiers always end in "()".
+              return "(" in name if kind in ("Test", "Test Case") else True
 
           started = {}
           with open("raw-test-output.log") as f:
               for line in f:
                   m = START_RE.search(line)
-                  if m:
+                  if m and is_real_entry(m.group(1), m.group(2)):
                       started[(m.group(1), m.group(2))] = True
                       continue
                   m = END_RE.search(line)
-                  if m:
+                  if m and is_real_entry(m.group(1), m.group(2)):
                       started.pop((m.group(1), m.group(2)), None)
 
           in_flight = [name for (_, name) in started]

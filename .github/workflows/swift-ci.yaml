@@ -77,6 +77,15 @@ on:
         default: false
         required: false
         type: boolean
+      apple-tests-parallel-testing-worker-count:
+        description: >-
+          Caps xcodebuild's simulator worker count for Step 3 Apple tests
+          (`-parallel-testing-worker-count`). Empty (default) leaves Xcode's
+          own default in place. Lower this if simulator destinations are
+          flaking under CPU/scheduler contention on the runner.
+        default: ''
+        required: false
+        type: string
 
       # ── Step 3: Third Party Tests ───────────────────────────
       enable-third-party-tests:
@@ -266,12 +275,23 @@ jobs:
       - name: 🧪 Run Tests with Coverage
         env:
           NSUnbufferedIO: YES
+          WORKER_COUNT: ${{ inputs.apple-tests-parallel-testing-worker-count }}
         run: |
+          # Empty WORKER_COUNT (the default) leaves Xcode's own parallel
+          # testing default in place; a value caps simulator worker count,
+          # trading job duration for less CPU/scheduler contention on the
+          # runner.
+          EXTRA_ARGS=()
+          if [ -n "$WORKER_COUNT" ]; then
+            EXTRA_ARGS+=(-parallel-testing-worker-count "$WORKER_COUNT")
+          fi
+
           set -o pipefail && xcodebuild test-without-building \
             -scheme "${{ inputs.package-name }}" \
             -destination "${{ matrix.destination }}" \
             -enableCodeCoverage YES \
-            -derivedDataPath .xcbuild 2>&1 | tee raw-test-output.log | xcbeautify --renderer github-actions
+            -derivedDataPath .xcbuild \
+            "${EXTRA_ARGS[@]}" 2>&1 | tee raw-test-output.log | xcbeautify --renderer github-actions
 
       - name: 🚨 Identify Test Running at Crash Time
         if: failure()

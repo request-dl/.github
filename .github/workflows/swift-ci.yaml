@@ -223,6 +223,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: 📦 Cache SwiftPM Dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/org.swift.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-deps-
+
       - name: 💔 Check API Breaking Changes
         run: |
           # ── Skip on push to main ────────────────────────────
@@ -296,6 +306,18 @@ jobs:
       - name: ☑️ Xcode Select
         run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
 
+      - name: 📦 Cache SwiftPM Dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          # xcodebuild clones package dependencies into DerivedData by
+          # default (private per-job, per-destination). Pointing it at a
+          # fixed, cached path instead lets every destination in this
+          # matrix — and every run — reuse the same cloned sources.
+          path: .swiftpm-cache
+          key: macOS-clonedSourcePackages-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            macOS-clonedSourcePackages-
+
       - name: ⚒️ Build Package
         env:
           NSUnbufferedIO: YES
@@ -303,7 +325,8 @@ jobs:
           set -o pipefail && xcodebuild build-for-testing \
             -scheme "${{ inputs.package-name }}" \
             -destination "${{ matrix.destination }}" \
-            -derivedDataPath .xcbuild 2>&1 | xcbeautify --quiet --renderer github-actions
+            -derivedDataPath .xcbuild \
+            -clonedSourcePackagesDirPath .swiftpm-cache 2>&1 | xcbeautify --quiet --renderer github-actions
 
       - name: 🧪 Run Tests with Coverage
         env:
@@ -524,6 +547,16 @@ jobs:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v7.0.1
 
+      - name: 📦 Cache SwiftPM Dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/org.swift.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-deps-
+
       - name: ⚒️ Test Package
         run: swift test --enable-code-coverage
 
@@ -574,6 +607,16 @@ jobs:
         uses: SwiftyLab/setup-swift@v1.14.0
         with:
           swift-version: ${{ inputs.swift-version }}
+
+      - name: 📦 Cache SwiftPM Dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/org.swift.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-deps-
 
       - name: 🔗 Setup Linkage Test Package
         env:
@@ -673,6 +716,16 @@ jobs:
 
       - name: ⬇️ Get Sources
         uses: actions/checkout@v7.0.1
+
+      - name: 📦 Cache SwiftPM Dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/org.swift.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-deps-
 
       - name: 🤖 Install Android Swift SDK + NDK
         run: |

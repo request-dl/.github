@@ -105,6 +105,23 @@ on:
         required: false
         type: boolean
 
+      # ── Step 3: Android Build ───────────────────────────────
+      enable-android-build:
+        description: 'Step 3 – Cross-compile the package for Android (build only, no test execution)'
+        default: false
+        required: false
+        type: boolean
+      android-swift-sdk:
+        description: 'Swift SDK identifier passed to `swift build --swift-sdk` for the Android cross-compile'
+        default: 'aarch64-unknown-linux-android28'
+        required: false
+        type: string
+      android-image:
+        description: 'Docker image providing the Swift toolchain + Android NDK/SDK (Swift Package Index build image)'
+        default: 'registry.gitlab.com/saguaro1/spi-images:android-6.3-latest'
+        required: false
+        type: string
+
       # ── Step 4: Coverage Upload ─────────────────────────────
       enable-coverage-upload:
         description: 'Step 4 – Upload coverage to Codecov'
@@ -132,10 +149,11 @@ concurrency:
 #       │
 #       ├──► apple-tests (matrix)
 #       ├──► third-party-tests (matrix)
-#       └──► linkage-test (Linux)
-#                 │
-#                 ▼
-#           coverage-upload
+#       ├──► linkage-test (Linux)
+#       │           │
+#       │           ▼
+#       │     coverage-upload
+#       └──► android-build (Linux, build only)
 # ═══════════════════════════════════════════════════════════════
 
 jobs:
@@ -620,6 +638,38 @@ jobs:
             echo '✅ SUCCESS: Binary is not linked against libFoundation.so - linkage test passed'
             echo 'The package correctly uses FoundationEssentials'
           fi
+
+  # ── STEP 3D: Android Build ──────────────────────────────────
+  android-build:
+    name: "🤖 Android"
+    needs: [format-check, breaking-changes]
+    if: |
+      always() &&
+      inputs.enable-android-build &&
+      (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
+      (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v7.0.1
+
+      - name: 🤖 Cross-compile for Android
+        run: |
+          # Mirrors the build command Swift Package Index runs to validate
+          # Android support (https://swiftpackageindex.com): the SPI image
+          # bundles a Swift toolchain with the Android Swift SDK already
+          # installed, so no local `swift sdk install` step is needed here.
+          # This only proves the package builds for the target — there's no
+          # Android runtime on the runner to execute tests against.
+          docker run --pull=always --rm \
+            -v "${{ github.workspace }}:${{ github.workspace }}" \
+            -w "${{ github.workspace }}" \
+            -e JAVA_HOME="/root/.sdkman/candidates/java/current" \
+            -e SPI_BUILD="1" \
+            -e SPI_PROCESSING="1" \
+            "${{ inputs.android-image }}" \
+            swift build --swift-sdk "${{ inputs.android-swift-sdk }}"
 
   # ── STEP 4 ──────────────────────────────────────────────────
   coverage-upload:

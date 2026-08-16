@@ -28,7 +28,7 @@ on:
         required: false
         type: string
       debug:
-        description: 'Verbose CI logs (skips `xcbeautify --quiet` so full build output is kept)'
+        description: 'Verbose CI logs (bypasses `xcbeautify` entirely so raw xcodebuild output is kept)'
         default: false
         required: false
         type: boolean
@@ -328,24 +328,30 @@ jobs:
           NSUnbufferedIO: YES
           DEBUG: ${{ inputs.debug }}
         run: |
-          # --quiet drops xcbeautify's per-file compile lines, which is fine
-          # normally but hides exactly what you need when chasing a build
-          # failure. `debug` input keeps the full log for that case.
-          QUIET_FLAG=()
-          if [ "$DEBUG" != "true" ]; then
-            QUIET_FLAG=(--quiet)
-          fi
+          set -o pipefail
 
-          set -o pipefail && xcodebuild build-for-testing \
-            -scheme "${{ inputs.package-name }}" \
-            -destination "${{ matrix.destination }}" \
-            -derivedDataPath .xcbuild \
-            -clonedSourcePackagesDirPath .swiftpm-cache 2>&1 | xcbeautify "${QUIET_FLAG[@]}" --renderer github-actions
+          # xcbeautify's reformatted output hides exactly what you need when
+          # chasing a build failure. `debug` input bypasses it entirely so
+          # the raw xcodebuild log reaches the job output instead.
+          if [ "$DEBUG" = "true" ]; then
+            xcodebuild build-for-testing \
+              -scheme "${{ inputs.package-name }}" \
+              -destination "${{ matrix.destination }}" \
+              -derivedDataPath .xcbuild \
+              -clonedSourcePackagesDirPath .swiftpm-cache
+          else
+            xcodebuild build-for-testing \
+              -scheme "${{ inputs.package-name }}" \
+              -destination "${{ matrix.destination }}" \
+              -derivedDataPath .xcbuild \
+              -clonedSourcePackagesDirPath .swiftpm-cache 2>&1 | xcbeautify --quiet --renderer github-actions
+          fi
 
       - name: 🧪 Run Tests with Coverage
         env:
           NSUnbufferedIO: YES
           WORKER_COUNT: ${{ inputs.apple-tests-parallel-testing-worker-count }}
+          DEBUG: ${{ inputs.debug }}
         run: |
           # Empty WORKER_COUNT (the default) leaves Xcode's own parallel
           # testing default in place; a value caps simulator worker count,
@@ -356,12 +362,26 @@ jobs:
             EXTRA_ARGS+=(-parallel-testing-worker-count "$WORKER_COUNT")
           fi
 
-          set -o pipefail && xcodebuild test-without-building \
-            -scheme "${{ inputs.package-name }}" \
-            -destination "${{ matrix.destination }}" \
-            -enableCodeCoverage YES \
-            -derivedDataPath .xcbuild \
-            "${EXTRA_ARGS[@]}" 2>&1 | tee raw-test-output.log | xcbeautify --renderer github-actions
+          set -o pipefail
+
+          # raw-test-output.log is captured either way — the crash-time
+          # diagnostic step below depends on it. `debug` input additionally
+          # bypasses xcbeautify so the raw log reaches the job output too.
+          if [ "$DEBUG" = "true" ]; then
+            xcodebuild test-without-building \
+              -scheme "${{ inputs.package-name }}" \
+              -destination "${{ matrix.destination }}" \
+              -enableCodeCoverage YES \
+              -derivedDataPath .xcbuild \
+              "${EXTRA_ARGS[@]}" 2>&1 | tee raw-test-output.log
+          else
+            xcodebuild test-without-building \
+              -scheme "${{ inputs.package-name }}" \
+              -destination "${{ matrix.destination }}" \
+              -enableCodeCoverage YES \
+              -derivedDataPath .xcbuild \
+              "${EXTRA_ARGS[@]}" 2>&1 | tee raw-test-output.log | xcbeautify --renderer github-actions
+          fi
 
       - name: 🚨 Identify Test Running at Crash Time
         if: failure()

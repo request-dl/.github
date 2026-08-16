@@ -116,9 +116,24 @@ on:
         default: 'aarch64-unknown-linux-android28'
         required: false
         type: string
-      android-image:
-        description: 'Docker image providing the Swift toolchain + Android NDK/SDK (Swift Package Index build image)'
-        default: 'registry.gitlab.com/saguaro1/spi-images:android-6.3-latest'
+      android-toolchain-swift-version:
+        description: 'Host Swift toolchain version to install (must match the Android SDK bundle major.minor)'
+        default: '6.3'
+        required: false
+        type: string
+      android-sdk-url:
+        description: 'Download URL for the official swift.org Swift SDK for Android artifact bundle'
+        default: 'https://download.swift.org/swift-6.3.3-release/android-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_android.artifactbundle.tar.gz'
+        required: false
+        type: string
+      android-sdk-checksum:
+        description: 'Checksum for android-sdk-url, as required by `swift sdk install --checksum`'
+        default: 'd160cc3206dd1886dae3fef2337af5e25ec034692cd0ec225721c56cc69da7f5'
+        required: false
+        type: string
+      android-ndk-version:
+        description: 'Android NDK version (LTS r27d or later required) used to configure the SDK bundle'
+        default: 'r27d'
         required: false
         type: string
 
@@ -651,25 +666,49 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.14.0
+        with:
+          swift-version: ${{ inputs.android-toolchain-swift-version }}
+
       - name: ⬇️ Get Sources
         uses: actions/checkout@v7.0.1
 
-      - name: 🤖 Cross-compile for Android
+      - name: 🤖 Install Android Swift SDK + NDK
         run: |
-          # Mirrors the build command Swift Package Index runs to validate
-          # Android support (https://swiftpackageindex.com): the SPI image
-          # bundles a Swift toolchain with the Android Swift SDK already
-          # installed, so no local `swift sdk install` step is needed here.
-          # This only proves the package builds for the target — there's no
-          # Android runtime on the runner to execute tests against.
-          docker run --pull=always --rm \
-            -v "${{ github.workspace }}:${{ github.workspace }}" \
-            -w "${{ github.workspace }}" \
-            -e JAVA_HOME="/root/.sdkman/candidates/java/current" \
-            -e SPI_BUILD="1" \
-            -e SPI_PROCESSING="1" \
-            "${{ inputs.android-image }}" \
-            swift build --swift-sdk "${{ inputs.android-swift-sdk }}"
+          set -e
+          swift sdk install "${{ inputs.android-sdk-url }}" \
+            --checksum "${{ inputs.android-sdk-checksum }}"
+          swift sdk list
+
+          # The artifact bundle's info.json declares its Swift SDK variant
+          # under a "swift-android" relative path, which is where the NDK
+          # setup script lives. swift.org's own docs assume it lands at
+          # ~/.swiftpm/swift-sdks/<bundle>/swift-android, but on this
+          # toolchain that directory doesn't exist at all (confirmed: `find
+          # ~/.swiftpm/swift-sdks` itself fails with "No such file or
+          # directory") — so rather than guess another fixed base path,
+          # search the whole filesystem for wherever `swift sdk install`
+          # actually put it.
+          SWIFT_ANDROID_DIR=$(find / \( -path /proc -o -path /sys -o -path /dev \) -prune -o -type d -name 'swift-android' -print 2>/dev/null | head -n 1)
+          if [ -z "$SWIFT_ANDROID_DIR" ]; then
+            echo "❌ Could not locate a 'swift-android' directory anywhere on disk"
+            echo "HOME=$HOME"
+            env | grep -i swift || true
+            find "$HOME" -maxdepth 3
+            exit 1
+          fi
+          echo "Found: $SWIFT_ANDROID_DIR"
+          cd "$SWIFT_ANDROID_DIR"
+
+          curl -fSL -o ndk.zip \
+            "https://dl.google.com/android/repository/android-ndk-${{ inputs.android-ndk-version }}-linux.zip"
+          unzip -qo ndk.zip
+          export ANDROID_NDK_HOME="$PWD/android-ndk-${{ inputs.android-ndk-version }}"
+          ./scripts/setup-android-sdk.sh
+
+      - name: 🤖 Cross-compile for Android
+        run: swift build --swift-sdk "${{ inputs.android-swift-sdk }}" --static-swift-stdlib
 
   # ── STEP 4 ──────────────────────────────────────────────────
   coverage-upload:

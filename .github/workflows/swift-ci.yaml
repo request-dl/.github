@@ -27,6 +27,11 @@ on:
         default: 'macOS-26'
         required: false
         type: string
+      debug:
+        description: 'Verbose CI logs (skips `xcbeautify --quiet` so full build output is kept)'
+        default: false
+        required: false
+        type: boolean
 
       # ── Step 1: Format ──────────────────────────────────────
       enable-format:
@@ -321,12 +326,21 @@ jobs:
       - name: ⚒️ Build Package
         env:
           NSUnbufferedIO: YES
+          DEBUG: ${{ inputs.debug }}
         run: |
+          # --quiet drops xcbeautify's per-file compile lines, which is fine
+          # normally but hides exactly what you need when chasing a build
+          # failure. `debug` input keeps the full log for that case.
+          QUIET_FLAG=()
+          if [ "$DEBUG" != "true" ]; then
+            QUIET_FLAG=(--quiet)
+          fi
+
           set -o pipefail && xcodebuild build-for-testing \
             -scheme "${{ inputs.package-name }}" \
             -destination "${{ matrix.destination }}" \
             -derivedDataPath .xcbuild \
-            -clonedSourcePackagesDirPath .swiftpm-cache 2>&1 | xcbeautify --quiet --renderer github-actions
+            -clonedSourcePackagesDirPath .swiftpm-cache 2>&1 | xcbeautify "${QUIET_FLAG[@]}" --renderer github-actions
 
       - name: 🧪 Run Tests with Coverage
         env:

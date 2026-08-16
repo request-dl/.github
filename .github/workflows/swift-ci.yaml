@@ -229,7 +229,7 @@ jobs:
           path: |
             ~/.cache/org.swift.swiftpm
             ~/Library/Caches/org.swift.swiftpm
-          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package.resolved') }}
+          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package*.swift') }}
           restore-keys: |
             ${{ runner.os }}-swiftpm-deps-
 
@@ -314,7 +314,7 @@ jobs:
           # fixed, cached path instead lets every destination in this
           # matrix — and every run — reuse the same cloned sources.
           path: .swiftpm-cache
-          key: macOS-clonedSourcePackages-${{ hashFiles('**/Package.resolved') }}
+          key: macOS-clonedSourcePackages-${{ hashFiles('**/Package*.swift') }}
           restore-keys: |
             macOS-clonedSourcePackages-
 
@@ -553,7 +553,7 @@ jobs:
           path: |
             ~/.cache/org.swift.swiftpm
             ~/Library/Caches/org.swift.swiftpm
-          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package.resolved') }}
+          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package*.swift') }}
           restore-keys: |
             ${{ runner.os }}-swiftpm-deps-
 
@@ -614,7 +614,7 @@ jobs:
           path: |
             ~/.cache/org.swift.swiftpm
             ~/Library/Caches/org.swift.swiftpm
-          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package.resolved') }}
+          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package*.swift') }}
           restore-keys: |
             ${{ runner.os }}-swiftpm-deps-
 
@@ -723,7 +723,7 @@ jobs:
           path: |
             ~/.cache/org.swift.swiftpm
             ~/Library/Caches/org.swift.swiftpm
-          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package.resolved') }}
+          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package*.swift') }}
           restore-keys: |
             ${{ runner.os }}-swiftpm-deps-
 

@@ -681,14 +681,21 @@ jobs:
             --checksum "${{ inputs.android-sdk-checksum }}"
           swift sdk list
 
-          # `swift sdk install` extracts the artifact bundle's top-level
-          # directory under this name (the URL's filename minus .tar.gz) —
-          # cd into it to run its own NDK setup script, which wires the
-          # downloaded NDK's toolchain/sysroot paths into the bundle so
-          # later `swift build --swift-sdk` invocations don't need
-          # ANDROID_NDK_HOME set themselves.
-          BUNDLE_NAME=$(basename "${{ inputs.android-sdk-url }}" .tar.gz)
-          cd "$HOME/.swiftpm/swift-sdks/$BUNDLE_NAME/swift-android"
+          # The artifact bundle's info.json declares its Swift SDK variant
+          # under a "swift-android" relative path, which is where the NDK
+          # setup script lives — but the on-disk install root under
+          # ~/.swiftpm/swift-sdks doesn't reliably match the archive's
+          # top-level directory name (observed to diverge from the
+          # <url-filename-minus-.tar.gz> naming assumed by swift.org's own
+          # docs), so locate it by search instead of hardcoding the path.
+          SWIFT_ANDROID_DIR=$(find "$HOME/.swiftpm/swift-sdks" -maxdepth 3 -type d -name 'swift-android' 2>/dev/null | head -n 1)
+          if [ -z "$SWIFT_ANDROID_DIR" ]; then
+            echo "❌ Could not locate a 'swift-android' directory under ~/.swiftpm/swift-sdks"
+            find "$HOME/.swiftpm/swift-sdks" -maxdepth 4
+            exit 1
+          fi
+          echo "Found: $SWIFT_ANDROID_DIR"
+          cd "$SWIFT_ANDROID_DIR"
 
           curl -fSL -o ndk.zip \
             "https://dl.google.com/android/repository/android-ndk-${{ inputs.android-ndk-version }}-linux.zip"

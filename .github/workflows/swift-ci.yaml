@@ -144,10 +144,15 @@ on:
 
       # ── Step 3: Release Builds ──────────────────────────────
       enable-release-builds:
-        description: 'Step 3 – Build package in release mode (-c release) across the swift-nio Swift version matrix'
+        description: 'Step 3 – Build package in release mode (-c release) across a Swift version matrix (Linux, build only)'
         default: false
         required: false
         type: boolean
+      release-builds-swift-versions:
+        description: 'JSON array of Swift versions to build in release mode'
+        default: '["6.0", "6.1", "6.2", "6.3"]'
+        required: false
+        type: string
 
       # ── Step 3: Static SDK ──────────────────────────────────
       enable-static-sdk:
@@ -155,6 +160,21 @@ on:
         default: false
         required: false
         type: boolean
+      static-sdk-toolchain-swift-version:
+        description: 'Host Swift toolchain version to install (must match the static SDK bundle major.minor)'
+        default: '6.3'
+        required: false
+        type: string
+      static-sdk-url:
+        description: 'Download URL for the official swift.org static Linux SDK artifact bundle'
+        default: 'https://download.swift.org/swift-6.3.3-release/static-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz'
+        required: false
+        type: string
+      static-sdk-checksum:
+        description: 'Checksum for static-sdk-url, as required by `swift sdk install --checksum`'
+        default: '87c3eaf908e67c0e13a84367119e12273cec1d2cd3d81f7d74bb36722d6b607b'
+        required: false
+        type: string
 
       # ── Step 4: Coverage Upload ─────────────────────────────
       enable-coverage-upload:
@@ -815,14 +835,41 @@ jobs:
 
   # ── STEP 3E: Release Builds ─────────────────────────────────
   release-builds:
-    name: "🚀 Release Builds"
+    name: "🚀 Release (Swift ${{ matrix.swift-version }})"
     needs: [format-check, breaking-changes]
     if: |
       always() &&
       inputs.enable-release-builds &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
-    uses: apple/swift-nio/.github/workflows/release_builds.yml@main
+    strategy:
+      fail-fast: false
+      matrix:
+        swift-version: ${{ fromJSON(inputs.release-builds-swift-versions) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.14.0
+        with:
+          swift-version: ${{ matrix.swift-version }}
+
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v7.0.1
+
+      - name: 📦 Cache SwiftPM Dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/org.swift.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-deps-release-${{ matrix.swift-version }}-${{ hashFiles('**/Package*.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-deps-release-${{ matrix.swift-version }}-
+            ${{ runner.os }}-swiftpm-deps-
+
+      - name: 🚀 Build Package (Release)
+        run: swift build -c release
 
   # ── STEP 3F: Static SDK ─────────────────────────────────────
   static-sdk:
@@ -833,7 +880,36 @@ jobs:
       inputs.enable-static-sdk &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
-    uses: apple/swift-nio/.github/workflows/static_sdk.yml@main
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.14.0
+        with:
+          swift-version: ${{ inputs.static-sdk-toolchain-swift-version }}
+
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v7.0.1
+
+      - name: 📦 Cache SwiftPM Dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/org.swift.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package*.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-deps-
+
+      - name: 📦 Install Static Linux SDK
+        run: |
+          set -e
+          swift sdk install "${{ inputs.static-sdk-url }}" \
+            --checksum "${{ inputs.static-sdk-checksum }}"
+          swift sdk list
+
+      - name: 📦 Build Package (Static SDK)
+        run: swift build --swift-sdk x86_64-swift-linux-musl
 
   # ── STEP 4 ──────────────────────────────────────────────────
   coverage-upload:

@@ -150,7 +150,7 @@ on:
         type: boolean
       release-builds-swift-versions:
         description: 'JSON array of Swift versions to build in release mode'
-        default: '["6.0", "6.1", "6.2", "6.3"]'
+        default: '["6.2", "6.3"]'
         required: false
         type: string
 

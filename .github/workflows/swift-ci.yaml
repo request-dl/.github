@@ -869,7 +869,14 @@ jobs:
             ${{ runner.os }}-swiftpm-deps-
 
       - name: 🚀 Build Package (Release)
-        run: swift build -c release
+        env:
+          PROD_NAME: ${{ inputs.product-name != '' && inputs.product-name || inputs.name }}
+        run: |
+          # `swift build` with no --product also builds RequestDLTestSupport-style
+          # test-support targets, which use `@testable import` and can't compile
+          # in release mode (SwiftPM doesn't enable testability there). Scope the
+          # build to the actual shipped product instead.
+          swift build -c release --product "$PROD_NAME"
 
   # ── STEP 3F: Static SDK ─────────────────────────────────────
   static-sdk:
@@ -909,7 +916,9 @@ jobs:
           swift sdk list
 
       - name: 📦 Build Package (Static SDK)
-        run: swift build --swift-sdk x86_64-swift-linux-musl
+        env:
+          PROD_NAME: ${{ inputs.product-name != '' && inputs.product-name || inputs.name }}
+        run: swift build --swift-sdk x86_64-swift-linux-musl --product "$PROD_NAME"
 
   # ── STEP 4 ──────────────────────────────────────────────────
   coverage-upload:

@@ -869,14 +869,16 @@ jobs:
             ${{ runner.os }}-swiftpm-deps-
 
       - name: 🚀 Build Package (Release)
-        env:
-          PROD_NAME: ${{ inputs.product-name != '' && inputs.product-name || inputs.name }}
         run: |
-          # `swift build` with no --product also builds RequestDLTestSupport-style
-          # test-support targets, which use `@testable import` and can't compile
-          # in release mode (SwiftPM doesn't enable testability there). Scope the
-          # build to the actual shipped product instead.
-          swift build -c release --product "$PROD_NAME"
+          # Packages commonly have test-support targets (e.g. a shared
+          # RequestDLTestSupport-style helper) that use `@testable import`.
+          # SwiftPM doesn't enable testability for -c release builds by
+          # default, so those targets fail to compile even though they're
+          # not part of the shipped product — and which targets actually
+          # get pulled into a bare `swift build -c release` isn't reliably
+          # scoped by --product/--target across SwiftPM versions. Forcing
+          # testability on sidesteps that entirely.
+          swift build -c release -Xswiftc -enable-testing
 
   # ── STEP 3F: Static SDK ─────────────────────────────────────
   static-sdk:
@@ -916,9 +918,7 @@ jobs:
           swift sdk list
 
       - name: 📦 Build Package (Static SDK)
-        env:
-          PROD_NAME: ${{ inputs.product-name != '' && inputs.product-name || inputs.name }}
-        run: swift build --swift-sdk x86_64-swift-linux-musl --product "$PROD_NAME"
+        run: swift build --swift-sdk x86_64-swift-linux-musl -Xswiftc -enable-testing
 
   # ── STEP 4 ──────────────────────────────────────────────────
   coverage-upload:

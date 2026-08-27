@@ -1163,7 +1163,7 @@ jobs:
           done
 
       - name: 📋 List Generated LCOV Files
-        run: ls -la *.lcov
+        run: ls -la -- *.lcov
 
       - name: 📦 Upload to Codecov
         uses: codecov/codecov-action@v7.0.0

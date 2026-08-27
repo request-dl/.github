@@ -104,12 +104,13 @@ on:
         default: false
         required: false
         type: boolean
-      apple-tests-parallel-testing-worker-count:
+      apple-tests-max-parallelization-width:
         description: >-
-          Caps xcodebuild's simulator worker count for Step 4 Apple tests
-          (`-parallel-testing-worker-count`). Empty (default) leaves Xcode's
-          own default in place. Lower this if simulator destinations are
-          flaking under CPU/scheduler contention on the runner.
+          Caps how many Swift Testing tests run concurrently within a single
+          test process for Step 4 Apple tests
+          (`SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH`). Empty (default)
+          leaves Swift Testing's own default (NCORES * 2) in place. Lower
+          this if a suite with many tests overloads the simulator.
         default: ''
         required: false
         type: string
@@ -495,18 +496,9 @@ jobs:
       - name: 🧪 Run Tests with Coverage
         env:
           NSUnbufferedIO: YES
-          WORKER_COUNT: ${{ inputs.apple-tests-parallel-testing-worker-count }}
+          SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH: ${{ inputs.apple-tests-max-parallelization-width }}
           DEBUG: ${{ inputs.debug }}
         run: |
-          # Empty WORKER_COUNT (the default) leaves Xcode's own parallel
-          # testing default in place; a value caps simulator worker count,
-          # trading job duration for less CPU/scheduler contention on the
-          # runner.
-          EXTRA_ARGS=()
-          if [ -n "$WORKER_COUNT" ]; then
-            EXTRA_ARGS+=(-parallel-testing-worker-count "$WORKER_COUNT")
-          fi
-
           set -o pipefail
 
           # raw-test-output.log is captured either way — the crash-time
@@ -517,15 +509,13 @@ jobs:
               -scheme "${{ inputs.package-name }}" \
               -destination "${{ matrix.destination }}" \
               -enableCodeCoverage YES \
-              -derivedDataPath .xcbuild \
-              "${EXTRA_ARGS[@]}" 2>&1 | tee raw-test-output.log
+              -derivedDataPath .xcbuild 2>&1 | tee raw-test-output.log
           else
             xcodebuild test-without-building \
               -scheme "${{ inputs.package-name }}" \
               -destination "${{ matrix.destination }}" \
               -enableCodeCoverage YES \
-              -derivedDataPath .xcbuild \
-              "${EXTRA_ARGS[@]}" 2>&1 | tee raw-test-output.log | xcbeautify --renderer github-actions
+              -derivedDataPath .xcbuild 2>&1 | tee raw-test-output.log | xcbeautify --renderer github-actions
           fi
 
       - name: 🚨 Identify Test Running at Crash Time

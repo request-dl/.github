@@ -33,9 +33,30 @@ on:
         required: false
         type: boolean
 
-      # ── Step 1: Format ──────────────────────────────────────
+      # ── Step 1: Header Validation ───────────────────────────
+      enable-header-validation:
+        description: 'Step 1 – Validate license header in *.swift files'
+        default: false
+        required: false
+        type: boolean
+      header-path:
+        default: '.'
+        required: false
+        type: string
+      header-template:
+        description: 'Expected header block; each line is matched against the first lines of every *.swift file'
+        default: ''
+        required: false
+        type: string
+      header-use-regex:
+        description: 'Treat each line of header-template as an extended regular expression instead of literal text'
+        default: false
+        required: false
+        type: boolean
+
+      # ── Step 2: Format ──────────────────────────────────────
       enable-format:
-        description: 'Step 1 – Validate swift format'
+        description: 'Step 2 – Validate swift format'
         default: true
         required: false
         type: boolean
@@ -48,9 +69,9 @@ on:
         required: false
         type: string
 
-      # ── Step 2: Breaking Changes ────────────────────────────
+      # ── Step 3: Breaking Changes ────────────────────────────
       enable-breaking-changes:
-        description: 'Step 2 – Check API breaking changes'
+        description: 'Step 3 – Check API breaking changes'
         default: false
         required: false
         type: boolean
@@ -64,9 +85,9 @@ on:
         required: false
         type: boolean
 
-      # ── Step 3: Apple Tests ─────────────────────────────────
+      # ── Step 4: Apple Tests ─────────────────────────────────
       enable-apple-tests:
-        description: 'Step 3 – Run Apple platform tests'
+        description: 'Step 4 – Run Apple platform tests'
         default: false
         required: false
         type: boolean
@@ -84,7 +105,7 @@ on:
         type: boolean
       apple-tests-parallel-testing-worker-count:
         description: >-
-          Caps xcodebuild's simulator worker count for Step 3 Apple tests
+          Caps xcodebuild's simulator worker count for Step 4 Apple tests
           (`-parallel-testing-worker-count`). Empty (default) leaves Xcode's
           own default in place. Lower this if simulator destinations are
           flaking under CPU/scheduler contention on the runner.
@@ -92,9 +113,9 @@ on:
         required: false
         type: string
 
-      # ── Step 3: Third Party Tests ───────────────────────────
+      # ── Step 4: Third Party Tests ───────────────────────────
       enable-third-party-tests:
-        description: 'Step 3 – Run third-party platform tests'
+        description: 'Step 4 – Run third-party platform tests'
         default: false
         required: false
         type: boolean
@@ -103,16 +124,16 @@ on:
         required: false
         type: boolean
 
-      # ── Step 3: Linkage Test (FoundationEssentials) ─────────
+      # ── Step 4: Linkage Test (FoundationEssentials) ─────────
       enable-linkage-test:
-        description: 'Step 3 – Run linkage test for FoundationEssentials (Linux only)'
+        description: 'Step 4 – Run linkage test for FoundationEssentials (Linux only)'
         default: false
         required: false
         type: boolean
 
-      # ── Step 3: Android Build ───────────────────────────────
+      # ── Step 4: Android Build ───────────────────────────────
       enable-android-build:
-        description: 'Step 3 – Cross-compile the package for Android (build only, no test execution)'
+        description: 'Step 4 – Cross-compile the package for Android (build only, no test execution)'
         default: false
         required: false
         type: boolean
@@ -142,9 +163,9 @@ on:
         required: false
         type: string
 
-      # ── Step 3: Release Builds ──────────────────────────────
+      # ── Step 4: Release Builds ──────────────────────────────
       enable-release-builds:
-        description: 'Step 3 – Build package in release mode (-c release) across a Swift version matrix (Linux, build only)'
+        description: 'Step 4 – Build package in release mode (-c release) across a Swift version matrix (Linux, build only)'
         default: false
         required: false
         type: boolean
@@ -154,9 +175,9 @@ on:
         required: false
         type: string
 
-      # ── Step 3: Static SDK ──────────────────────────────────
+      # ── Step 4: Static SDK ──────────────────────────────────
       enable-static-sdk:
-        description: 'Step 3 – Build package against the static Linux SDK (x86_64-swift-linux-musl)'
+        description: 'Step 4 – Build package against the static Linux SDK (x86_64-swift-linux-musl)'
         default: false
         required: false
         type: boolean
@@ -176,9 +197,9 @@ on:
         required: false
         type: string
 
-      # ── Step 4: Coverage Upload ─────────────────────────────
+      # ── Step 5: Coverage Upload ─────────────────────────────
       enable-coverage-upload:
-        description: 'Step 4 – Upload coverage to Codecov'
+        description: 'Step 5 – Upload coverage to Codecov'
         default: false
         required: false
         type: boolean
@@ -196,6 +217,9 @@ concurrency:
 # ═══════════════════════════════════════════════════════════════
 #  HIERARQUIA
 #
+#  header-validation
+#       │
+#       ▼
 #  format-check
 #       │
 #       ▼
@@ -214,9 +238,85 @@ concurrency:
 
 jobs:
   # ── STEP 1 ──────────────────────────────────────────────────
+  header-validation:
+    name: "🪪 Header"
+    if: inputs.enable-header-validation
+    runs-on: ${{ inputs.platform }}
+    timeout-minutes: 5
+    steps:
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v7.0.1
+
+      - name: 🪪 Check License Header
+        env:
+          HEADER_TEMPLATE: ${{ inputs.header-template }}
+          HEADER_USE_REGEX: ${{ inputs.header-use-regex }}
+          HEADER_PATH: ${{ inputs.header-path }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$HEADER_TEMPLATE" ]; then
+            echo "❌ enable-header-validation is true but header-template is empty"
+            exit 1
+          fi
+
+          header_lines=()
+          while IFS= read -r line || [ -n "$line" ]; do
+            header_lines+=("$line")
+          done < <(printf '%s' "$HEADER_TEMPLATE")
+          line_count=${#header_lines[@]}
+
+          echo "=== Expected header (${line_count} line(s), regex=${HEADER_USE_REGEX}) ==="
+          printf '%s\n' "${header_lines[@]}"
+          echo "==="
+
+          failures=0
+          while IFS= read -r -d '' file; do
+            file_lines=()
+            while IFS= read -r line || [ -n "$line" ]; do
+              file_lines+=("$line")
+              if [ "${#file_lines[@]}" -ge "$line_count" ]; then
+                break
+              fi
+            done < "$file"
+
+            ok=true
+            for i in "${!header_lines[@]}"; do
+              expected="${header_lines[$i]}"
+              actual="${file_lines[$i]:-}"
+              if [ "$HEADER_USE_REGEX" == "true" ]; then
+                if ! [[ "$actual" =~ ^${expected}$ ]]; then
+                  ok=false
+                  break
+                fi
+              elif [ "$actual" != "$expected" ]; then
+                ok=false
+                break
+              fi
+            done
+
+            if [ "$ok" = false ]; then
+              echo "❌ $file"
+              failures=$((failures + 1))
+            fi
+          done < <(find "$HEADER_PATH" -type f -name '*.swift' -not -path '*/.build/*' -not -path '*/.git/*' -print0)
+
+          if [ "$failures" -gt 0 ]; then
+            echo ""
+            echo "💥 $failures file(s) with missing or invalid license header"
+            exit 1
+          fi
+
+          echo "✅ All Swift files have a valid license header"
+
+  # ── STEP 2 ──────────────────────────────────────────────────
   format-check:
     name: "🎨 Format"
-    if: inputs.enable-format
+    needs: header-validation
+    if: |
+      always() &&
+      inputs.enable-format &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped')
     runs-on: ${{ inputs.platform }}
     timeout-minutes: 10
     steps:
@@ -241,14 +341,15 @@ jobs:
           fi
           echo "✅ Formatting check passed"
 
-  # ── STEP 2 ──────────────────────────────────────────────────
+  # ── STEP 3 ──────────────────────────────────────────────────
   breaking-changes:
     name: "💔 Breaking Changes"
-    needs: format-check
+    needs: [header-validation, format-check]
     if: |
       always() &&
       inputs.enable-breaking-changes &&
       !inputs.force-skip-breaking-changes &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       !contains(github.event.pull_request.labels.*.name, 'breaking-changes')
     runs-on: ${{ inputs.platform }}
@@ -308,13 +409,14 @@ jobs:
           echo "Checking breaking changes against $latest_tag"
           swift package diagnose-api-breaking-changes "$latest_tag"
 
-  # ── STEP 3A ─────────────────────────────────────────────────
+  # ── STEP 4A ─────────────────────────────────────────────────
   apple-tests:
     name: "🍎 ${{ matrix.name }}"
-    needs: [format-check, breaking-changes]
+    needs: [header-validation, format-check, breaking-changes]
     if: |
       always() &&
       inputs.enable-apple-tests &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
     strategy:
@@ -589,13 +691,14 @@ jobs:
           name: apple-${{ matrix.name }}
           path: coverage-artifacts/
 
-  # ── STEP 3B ─────────────────────────────────────────────────
+  # ── STEP 4B ─────────────────────────────────────────────────
   third-party-tests:
     name: "🔧 ${{ matrix.name }}"
-    needs: [format-check, breaking-changes]
+    needs: [header-validation, format-check, breaking-changes]
     if: |
       always() &&
       inputs.enable-third-party-tests &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
     strategy:
@@ -658,13 +761,14 @@ jobs:
           name: third-party-${{ matrix.name }}
           path: coverage-artifacts/
 
-  # ── STEP 3C: Linkage Test (FoundationEssentials) ───────────
+  # ── STEP 4C: Linkage Test (FoundationEssentials) ───────────
   linkage-test:
     name: "🔗 Linkage Test (FoundationEssentials)"
-    needs: [format-check, breaking-changes]
+    needs: [header-validation, format-check, breaking-changes]
     if: |
       always() &&
       inputs.enable-linkage-test &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
     runs-on: ubuntu-latest
@@ -767,13 +871,14 @@ jobs:
             echo 'The package correctly uses FoundationEssentials'
           fi
 
-  # ── STEP 3D: Android Build ──────────────────────────────────
+  # ── STEP 4D: Android Build ──────────────────────────────────
   android-build:
     name: "🤖 Android"
-    needs: [format-check, breaking-changes]
+    needs: [header-validation, format-check, breaking-changes]
     if: |
       always() &&
       inputs.enable-android-build &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
     runs-on: ubuntu-latest
@@ -833,13 +938,14 @@ jobs:
       - name: 🤖 Cross-compile for Android
         run: swift build --swift-sdk "${{ inputs.android-swift-sdk }}" --static-swift-stdlib
 
-  # ── STEP 3E: Release Builds ─────────────────────────────────
+  # ── STEP 4E: Release Builds ─────────────────────────────────
   release-builds:
     name: "🚀 Release (Swift ${{ matrix.swift-version }})"
-    needs: [format-check, breaking-changes]
+    needs: [header-validation, format-check, breaking-changes]
     if: |
       always() &&
       inputs.enable-release-builds &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
     strategy:
@@ -880,13 +986,14 @@ jobs:
           # testability on sidesteps that entirely.
           swift build -c release -Xswiftc -enable-testing
 
-  # ── STEP 3F: Static SDK ─────────────────────────────────────
+  # ── STEP 4F: Static SDK ─────────────────────────────────────
   static-sdk:
     name: "📦 Static SDK"
-    needs: [format-check, breaking-changes]
+    needs: [header-validation, format-check, breaking-changes]
     if: |
       always() &&
       inputs.enable-static-sdk &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
     runs-on: ubuntu-latest
@@ -920,7 +1027,7 @@ jobs:
       - name: 📦 Build Package (Static SDK)
         run: swift build --swift-sdk x86_64-swift-linux-musl -Xswiftc -enable-testing
 
-  # ── STEP 4 ──────────────────────────────────────────────────
+  # ── STEP 5 ──────────────────────────────────────────────────
   coverage-upload:
     name: "📤 Coverage Upload"
     needs: [apple-tests, third-party-tests, linkage-test]

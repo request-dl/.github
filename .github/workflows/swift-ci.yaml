@@ -39,8 +39,9 @@ on:
         default: false
         required: false
         type: boolean
-      header-path:
-        default: '.'
+      header-paths:
+        description: 'JSON array of paths to scan for *.swift files'
+        default: '["."]'
         required: false
         type: string
       header-template:
@@ -251,7 +252,7 @@ jobs:
         env:
           HEADER_TEMPLATE: ${{ inputs.header-template }}
           HEADER_USE_REGEX: ${{ inputs.header-use-regex }}
-          HEADER_PATH: ${{ inputs.header-path }}
+          HEADER_PATHS: ${{ inputs.header-paths }}
         run: |
           set -euo pipefail
 
@@ -269,6 +270,12 @@ jobs:
           echo "=== Expected header (${line_count} line(s), regex=${HEADER_USE_REGEX}) ==="
           printf '%s\n' "${header_lines[@]}"
           echo "==="
+
+          header_paths=()
+          while IFS= read -r path; do
+            header_paths+=("$path")
+          done < <(printf '%s' "$HEADER_PATHS" | jq -r '.[]')
+          echo "=== Scanning paths: ${header_paths[*]} ==="
 
           failures=0
           while IFS= read -r -d '' file; do
@@ -299,7 +306,7 @@ jobs:
               echo "❌ $file"
               failures=$((failures + 1))
             fi
-          done < <(find "$HEADER_PATH" -type f -name '*.swift' -not -path '*/.build/*' -not -path '*/.git/*' -print0)
+          done < <(find "${header_paths[@]}" -type f -name '*.swift' -not -name 'Package.swift' -not -name 'Package@swift-*.swift' -not -path '*/.build/*' -not -path '*/.git/*' -print0)
 
           if [ "$failures" -gt 0 ]; then
             echo ""

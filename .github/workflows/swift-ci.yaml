@@ -54,6 +54,11 @@ on:
         default: false
         required: false
         type: boolean
+      header-validation-timeout-minutes:
+        description: 'Timeout (minutes) for Step 1 – Header Validation'
+        default: 5
+        required: false
+        type: number
 
       # ── Step 2: Format ──────────────────────────────────────
       enable-format:
@@ -69,6 +74,11 @@ on:
         default: '.swift-format'
         required: false
         type: string
+      format-timeout-minutes:
+        description: 'Timeout (minutes) for Step 2 – Format'
+        default: 10
+        required: false
+        type: number
 
       # ── Step 3: Breaking Changes ────────────────────────────
       enable-breaking-changes:
@@ -85,6 +95,11 @@ on:
         default: false
         required: false
         type: boolean
+      breaking-changes-timeout-minutes:
+        description: 'Timeout (minutes) for Step 3 – Breaking Changes'
+        default: 15
+        required: false
+        type: number
 
       # ── Step 4: Apple Tests ─────────────────────────────────
       enable-apple-tests:
@@ -139,6 +154,26 @@ on:
           {"destination":"platform=macOS,arch=arm64,variant=Mac Catalyst,name=My Mac","name":"macOS Catalyst"}]
         required: false
         type: string
+      apple-tests-crash-watch-enabled:
+        description: >-
+          Watches ~/Library/Logs/DiagnosticReports (and the system-wide
+          /Library/Logs/DiagnosticReports) for a new crash report while
+          `xcodebuild test-without-building` is running for Step 4 Apple
+          Tests. Working theory: when a simulator/test process crashes,
+          xcodebuild sometimes hangs instead of exiting, burning the whole
+          job timeout before anything is reported. If a new crash report
+          shows up mid-run, this kills the hung xcodebuild early instead of
+          waiting it out. Any crash report captured during the run (whether
+          or not it triggered an early kill) is uploaded as the
+          crash-reports-<name> artifact.
+        default: true
+        required: false
+        type: boolean
+      apple-tests-timeout-minutes:
+        description: 'Timeout (minutes) for each Step 4 Apple Tests matrix leg'
+        default: 30
+        required: false
+        type: number
 
       # ── Step 4: Third Party Tests ───────────────────────────
       enable-third-party-tests:
@@ -150,6 +185,11 @@ on:
         default: false
         required: false
         type: boolean
+      third-party-tests-timeout-minutes:
+        description: 'Timeout (minutes) for each Step 4 Third Party Tests matrix leg'
+        default: 20
+        required: false
+        type: number
 
       # ── Step 4: Linkage Test (FoundationEssentials) ─────────
       enable-linkage-test:
@@ -157,6 +197,11 @@ on:
         default: false
         required: false
         type: boolean
+      linkage-test-timeout-minutes:
+        description: 'Timeout (minutes) for Step 4 – Linkage Test'
+        default: 10
+        required: false
+        type: number
 
       # ── Step 4: Android Build ───────────────────────────────
       enable-android-build:
@@ -189,6 +234,11 @@ on:
         default: 'r27d'
         required: false
         type: string
+      android-build-timeout-minutes:
+        description: 'Timeout (minutes) for Step 4 – Android Build'
+        default: 20
+        required: false
+        type: number
 
       # ── Step 4: Release Builds ──────────────────────────────
       enable-release-builds:
@@ -201,6 +251,11 @@ on:
         default: '["6.2", "6.3"]'
         required: false
         type: string
+      release-builds-timeout-minutes:
+        description: 'Timeout (minutes) for Step 4 – Release Builds (per Swift version leg)'
+        default: 20
+        required: false
+        type: number
 
       # ── Step 4: Static SDK ──────────────────────────────────
       enable-static-sdk:
@@ -223,6 +278,11 @@ on:
         default: '87c3eaf908e67c0e13a84367119e12273cec1d2cd3d81f7d74bb36722d6b607b'
         required: false
         type: string
+      static-sdk-timeout-minutes:
+        description: 'Timeout (minutes) for Step 4 – Static SDK'
+        default: 20
+        required: false
+        type: number
 
       # ── Step 5: Coverage Upload ─────────────────────────────
       enable-coverage-upload:
@@ -230,6 +290,11 @@ on:
         default: false
         required: false
         type: boolean
+      coverage-upload-timeout-minutes:
+        description: 'Timeout (minutes) for Step 5 – Coverage Upload'
+        default: 15
+        required: false
+        type: number
     secrets:
       CODECOV_TOKEN:
         required: false
@@ -269,7 +334,7 @@ jobs:
     name: "🪪 Header"
     if: inputs.enable-header-validation
     runs-on: ${{ inputs.platform }}
-    timeout-minutes: 5
+    timeout-minutes: ${{ inputs.header-validation-timeout-minutes }}
     steps:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v7.0.1
@@ -351,7 +416,7 @@ jobs:
       inputs.enable-format &&
       (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped')
     runs-on: ${{ inputs.platform }}
-    timeout-minutes: 10
+    timeout-minutes: ${{ inputs.format-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
         uses: SwiftyLab/setup-swift@v1.14.0
@@ -386,7 +451,7 @@ jobs:
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       !contains(github.event.pull_request.labels.*.name, 'breaking-changes')
     runs-on: ${{ inputs.platform }}
-    timeout-minutes: 15
+    timeout-minutes: ${{ inputs.breaking-changes-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
         uses: SwiftyLab/setup-swift@v1.14.0
@@ -457,7 +522,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(inputs.apple-tests-matrix) }}
     runs-on: ${{ inputs.platform }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ inputs.apple-tests-timeout-minutes }}
     steps:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v7.0.1
@@ -504,12 +569,21 @@ jobs:
               -clonedSourcePackagesDirPath .swiftpm-cache 2>&1 | xcbeautify --quiet --renderer github-actions
           fi
 
+      - name: 📸 Snapshot Existing Crash Reports
+        if: inputs.apple-tests-crash-watch-enabled
+        run: |
+          mkdir -p "$HOME/Library/Logs/DiagnosticReports"
+          find "$HOME/Library/Logs/DiagnosticReports" /Library/Logs/DiagnosticReports \
+            -maxdepth 1 -type f \( -name '*.crash' -o -name '*.ips' \) 2>/dev/null \
+            | sort > /tmp/crash-reports-before.txt
+
       - name: 🧪 Run Tests with Coverage
         env:
           NSUnbufferedIO: YES
           SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH: ${{ inputs.apple-tests-max-parallelization-width }}
           WORKER_COUNT: ${{ inputs.apple-tests-parallel-testing-worker-count }}
           DEBUG: ${{ inputs.debug }}
+          CRASH_WATCH: ${{ inputs.apple-tests-crash-watch-enabled }}
         run: |
           # Empty WORKER_COUNT (the default) leaves Xcode's own parallel
           # testing default in place; a value caps simulator worker count,
@@ -525,21 +599,56 @@ jobs:
           # raw-test-output.log is captured either way — the crash-time
           # diagnostic step below depends on it. `debug` input additionally
           # bypasses xcbeautify so the raw log reaches the job output too.
+          # The whole pipeline is backgrounded (instead of run in the
+          # foreground like every other xcodebuild step here) so the crash
+          # watcher below can poll for a new crash report concurrently.
           if [ "$DEBUG" = "true" ]; then
             xcodebuild test-without-building \
               -scheme "${{ inputs.package-name }}" \
               -destination "${{ matrix.destination }}" \
               -enableCodeCoverage YES \
               -derivedDataPath .xcbuild \
-              "${EXTRA_ARGS[@]}" 2>&1 | tee raw-test-output.log
+              "${EXTRA_ARGS[@]}" 2>&1 | tee raw-test-output.log &
           else
             xcodebuild test-without-building \
               -scheme "${{ inputs.package-name }}" \
               -destination "${{ matrix.destination }}" \
               -enableCodeCoverage YES \
               -derivedDataPath .xcbuild \
-              "${EXTRA_ARGS[@]}" 2>&1 | tee raw-test-output.log | xcbeautify --renderer github-actions
+              "${EXTRA_ARGS[@]}" 2>&1 | tee raw-test-output.log | xcbeautify --renderer github-actions &
           fi
+          TEST_PID=$!
+
+          if [ "$CRASH_WATCH" = "true" ]; then
+            # Working theory: when a simulator/xctest process crashes,
+            # xcodebuild sometimes hangs instead of exiting, so the job
+            # silently burns its whole timeout before anything is ever
+            # reported. Poll for a *new* crash report (diffed against the
+            # pre-run snapshot from the previous step) while xcodebuild is
+            # still up, and kill it the moment one appears instead of
+            # waiting the timeout out. The 🩻 Collect Crash Reports step
+            # further down uploads whatever it finds either way, whether or
+            # not this loop is the one that ends the run.
+            while kill -0 "$TEST_PID" 2>/dev/null; do
+              NEW_CRASH=$(comm -13 /tmp/crash-reports-before.txt \
+                <(find "$HOME/Library/Logs/DiagnosticReports" /Library/Logs/DiagnosticReports \
+                    -maxdepth 1 -type f \( -name '*.crash' -o -name '*.ips' \) 2>/dev/null | sort) \
+                | head -n 1)
+              if [ -n "$NEW_CRASH" ]; then
+                echo "::error::New crash report detected while xcodebuild was still running ($NEW_CRASH) — killing the hung run instead of waiting for the job timeout."
+                sleep 5 # let the crash reporter finish writing the file
+                pkill -TERM -P "$TEST_PID" 2>/dev/null || true
+                sleep 5
+                pkill -KILL -P "$TEST_PID" 2>/dev/null || true
+                kill -KILL "$TEST_PID" 2>/dev/null || true
+                wait "$TEST_PID" 2>/dev/null
+                exit 1
+              fi
+              sleep 5
+            done
+          fi
+
+          wait "$TEST_PID"
 
       - name: 🚨 Identify Test Running at Crash Time
         if: failure()
@@ -594,6 +703,34 @@ jobs:
         with:
           name: raw-test-log-${{ matrix.name }}
           path: raw-test-output.log
+
+      - name: 🩻 Collect Crash Reports
+        if: always() && inputs.apple-tests-crash-watch-enabled
+        run: |
+          # Falls back to an empty snapshot if the previous step never ran
+          # (e.g. the 🍺/☑️ setup steps failed first) so every crash report
+          # found here is still treated as new and gets collected.
+          touch /tmp/crash-reports-before.txt
+
+          mkdir -p crash-artifacts
+          comm -13 /tmp/crash-reports-before.txt \
+            <(find "$HOME/Library/Logs/DiagnosticReports" /Library/Logs/DiagnosticReports \
+                -maxdepth 1 -type f \( -name '*.crash' -o -name '*.ips' \) 2>/dev/null | sort) \
+            | while IFS= read -r crash_report; do
+                [ -f "$crash_report" ] && cp "$crash_report" crash-artifacts/
+              done
+
+          if [ -n "$(find crash-artifacts -type f -print -quit)" ]; then
+            echo "::warning::New crash report(s) captured during this test run — see the crash-reports-${{ matrix.name }} artifact."
+          fi
+
+      - name: 📤 Upload Crash Reports
+        if: always() && inputs.apple-tests-crash-watch-enabled
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: crash-reports-${{ matrix.name }}
+          path: crash-artifacts/
+          if-no-files-found: ignore
 
       - name: 🔀 Extract Coverage Report
         if: inputs.apple-coverage-enabled
@@ -730,7 +867,7 @@ jobs:
           # - platform: "windows-latest"
           #   name: "Windows"
     runs-on: ${{ matrix.platform }}
-    timeout-minutes: 20
+    timeout-minutes: ${{ inputs.third-party-tests-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
         uses: SwiftyLab/setup-swift@v1.14.0
@@ -792,7 +929,7 @@ jobs:
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: ${{ inputs.linkage-test-timeout-minutes }}
     steps:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v7.0.1
@@ -902,7 +1039,7 @@ jobs:
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: ${{ inputs.android-build-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
         uses: SwiftyLab/setup-swift@v1.14.0
@@ -973,7 +1110,7 @@ jobs:
       matrix:
         swift-version: ${{ fromJSON(inputs.release-builds-swift-versions) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: ${{ inputs.release-builds-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
         uses: SwiftyLab/setup-swift@v1.14.0
@@ -1017,7 +1154,7 @@ jobs:
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: ${{ inputs.static-sdk-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
         uses: SwiftyLab/setup-swift@v1.14.0
@@ -1056,7 +1193,7 @@ jobs:
       inputs.enable-coverage-upload &&
       (needs.apple-tests.result != 'cancelled' || needs.third-party-tests.result != 'cancelled')
     runs-on: ${{ inputs.platform }}
-    timeout-minutes: 15
+    timeout-minutes: ${{ inputs.coverage-upload-timeout-minutes }}
     steps:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v7.0.1

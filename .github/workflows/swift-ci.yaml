@@ -159,16 +159,30 @@ on:
           Watches ~/Library/Logs/DiagnosticReports (and the system-wide
           /Library/Logs/DiagnosticReports) for a new crash report while
           `xcodebuild test-without-building` is running for Step 4 Apple
-          Tests. Working theory: when a simulator/test process crashes,
-          xcodebuild sometimes hangs instead of exiting, burning the whole
-          job timeout before anything is reported. If a new crash report
-          shows up mid-run, this kills the hung xcodebuild early instead of
-          waiting it out. Any crash report captured during the run (whether
-          or not it triggered an early kill) is uploaded as the
-          crash-reports-<name> artifact.
+          Tests. A crash report alone doesn't mean xcodebuild is hung —
+          Xcode's own post-crash diagnostics collection is expected to run
+          for a while and self-limits at ~10 minutes
+          ("IDETestOperationsObserverDebug: Failure collecting diagnostics
+          ... Timed out after 600.0 seconds") without affecting already
+          finished test results — so this only kills the run if no new line
+          appears in the test output for apple-tests-crash-watch-grace-minutes
+          after a crash report shows up, i.e. xcodebuild looks genuinely
+          stuck rather than just running that collection out. Any crash
+          report captured during the run (whether or not it triggered an
+          early kill) is uploaded as the crash-reports-<name> artifact.
         default: true
         required: false
         type: boolean
+      apple-tests-crash-watch-grace-minutes:
+        description: >-
+          Minutes of no new xcodebuild test output tolerated after a crash
+          report appears before apple-tests-crash-watch-enabled kills the
+          run. Default is set comfortably above Xcode's own ~10-minute
+          diagnostics-collection self-timeout so that legitimate collection
+          isn't mistaken for a hang.
+        default: 12
+        required: false
+        type: number
       apple-tests-timeout-minutes:
         description: 'Timeout (minutes) for each Step 4 Apple Tests matrix leg'
         default: 30
@@ -584,6 +598,7 @@ jobs:
           WORKER_COUNT: ${{ inputs.apple-tests-parallel-testing-worker-count }}
           DEBUG: ${{ inputs.debug }}
           CRASH_WATCH: ${{ inputs.apple-tests-crash-watch-enabled }}
+          CRASH_WATCH_GRACE_MINUTES: ${{ inputs.apple-tests-crash-watch-grace-minutes }}
         run: |
           # Empty WORKER_COUNT (the default) leaves Xcode's own parallel
           # testing default in place; a value caps simulator worker count,
@@ -620,29 +635,47 @@ jobs:
           TEST_PID=$!
 
           if [ "$CRASH_WATCH" = "true" ]; then
-            # Working theory: when a simulator/xctest process crashes,
-            # xcodebuild sometimes hangs instead of exiting, so the job
-            # silently burns its whole timeout before anything is ever
-            # reported. Poll for a *new* crash report (diffed against the
-            # pre-run snapshot from the previous step) while xcodebuild is
-            # still up, and kill it the moment one appears instead of
-            # waiting the timeout out. The 🩻 Collect Crash Reports step
-            # further down uploads whatever it finds either way, whether or
-            # not this loop is the one that ends the run.
+            # A crash report showing up mid-run doesn't by itself mean
+            # xcodebuild is stuck: Xcode's own post-crash diagnostics
+            # collection is expected to take a while and self-limits at
+            # ~10 minutes ("IDETestOperationsObserverDebug: Failure
+            # collecting diagnostics ... Timed out after 600.0 seconds")
+            # without affecting test results that already finished — and
+            # xcodebuild produces no new test-output lines while that
+            # collection is in progress either. Killing the moment a crash
+            # report appears risks tearing down xcodebuild mid-.xcresult
+            # write, corrupting/losing results and coverage for every test
+            # in the run, not just the crashed one. So instead: once a
+            # crash report is seen, only kill once xcodebuild has ALSO gone
+            # $CRASH_WATCH_GRACE_MINUTES with no new line written to
+            # raw-test-output.log — that combination means it's genuinely
+            # stuck rather than just running that collection out. The 🩻
+            # Collect Crash Reports step further down uploads whatever
+            # crash report it finds either way, whether or not this loop is
+            # the one that ends the run.
+            GRACE_SECONDS=$((CRASH_WATCH_GRACE_MINUTES * 60))
+            CRASH_WARNED=""
             while kill -0 "$TEST_PID" 2>/dev/null; do
               NEW_CRASH=$(comm -13 /tmp/crash-reports-before.txt \
                 <(find "$HOME/Library/Logs/DiagnosticReports" /Library/Logs/DiagnosticReports \
                     -maxdepth 1 -type f \( -name '*.crash' -o -name '*.ips' \) 2>/dev/null | sort) \
                 | head -n 1)
               if [ -n "$NEW_CRASH" ]; then
-                echo "::error::New crash report detected while xcodebuild was still running ($NEW_CRASH) — killing the hung run instead of waiting for the job timeout."
-                sleep 5 # let the crash reporter finish writing the file
-                pkill -TERM -P "$TEST_PID" 2>/dev/null || true
-                sleep 5
-                pkill -KILL -P "$TEST_PID" 2>/dev/null || true
-                kill -KILL "$TEST_PID" 2>/dev/null || true
-                wait "$TEST_PID" 2>/dev/null
-                exit 1
+                if [ -z "$CRASH_WARNED" ]; then
+                  CRASH_WARNED=1
+                  echo "::warning::New crash report detected while xcodebuild is still running ($NEW_CRASH). This can be Xcode's own (harmless, self-limited to ~10 minutes) post-crash diagnostics collection — only killing the run if no new test output appears for $CRASH_WATCH_GRACE_MINUTES more minute(s)."
+                fi
+                LAST_LOG_CHANGE=$(stat -f %m raw-test-output.log 2>/dev/null || echo 0)
+                IDLE_SECONDS=$(( $(date +%s) - LAST_LOG_CHANGE ))
+                if [ "$IDLE_SECONDS" -ge "$GRACE_SECONDS" ]; then
+                  echo "::error::xcodebuild produced no new test output for ${IDLE_SECONDS}s after a crash report appeared — treating it as genuinely stuck and killing the run instead of waiting for the job timeout."
+                  pkill -TERM -P "$TEST_PID" 2>/dev/null || true
+                  sleep 5
+                  pkill -KILL -P "$TEST_PID" 2>/dev/null || true
+                  kill -KILL "$TEST_PID" 2>/dev/null || true
+                  wait "$TEST_PID" 2>/dev/null
+                  exit 1
+                fi
               fi
               sleep 5
             done
@@ -668,10 +701,28 @@ jobs:
           # `Test someTest() passed after 0.012 seconds.` — the legacy XCTest
           # phrasing (`Test Case '-[Foo bar]' passed (0.001 seconds)`) always
           # quotes the name. Quotes are optional here so both survive.
-          START_RE = re.compile(r"\b(Test Suite|Test Case|Suite|Test)\s+['\"]?(.+?)['\"]?\s+started\b")
-          END_RE = re.compile(r"\b(Test Suite|Test Case|Suite|Test)\s+['\"]?(.+?)['\"]?\s+(passed|failed|skipped)\b")
+          #
+          # Parameterized swift-testing functions additionally emit a
+          # lowercase `Test case passing N argument(s) to someTest(_:)
+          # started.` / `... passed after Xs.` line per argument value, on
+          # top of the one outer `Test someTest(_:) started/passed` pair for
+          # the function itself. In practice the argument-value description
+          # embedded in that per-case line isn't guaranteed to render
+          # identically between its started and passed/failed lines (long
+          # values get elided differently, ordering isn't stable, etc.), so
+          # treating the two as the same dict key silently fails to pair
+          # them — every argument of every parameterized test then leaks as
+          # a permanent false "still running" entry, even though the test
+          # (and the outer Test entry that wraps it) finished normally. The
+          # outer pair is what actually reflects whether the test hung, so
+          # skip these per-case lines entirely instead of trying to pair
+          # them.
+          START_RE = re.compile(r"\b(Test Suite|Test [Cc]ase|Suite|Test)\s+['\"]?(.+?)['\"]?\s+started\b")
+          END_RE = re.compile(r"\b(Test Suite|Test [Cc]ase|Suite|Test)\s+['\"]?(.+?)['\"]?\s+(passed|failed|skipped)\b")
 
           def is_real_entry(kind, name):
+              if kind == "Test case":
+                  return False
               # swift-testing's top-level "Test run started." / "Test run
               # with N tests passed after Xs." lines aren't a real test —
               # they'd otherwise match as a "Test" named "run" that never

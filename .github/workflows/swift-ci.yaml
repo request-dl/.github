@@ -617,28 +617,34 @@ jobs:
             EXTRA_ARGS+=(-parallel-testing-worker-count "$WORKER_COUNT")
           fi
 
-          set -o pipefail
-
           # raw-test-output.log is captured either way — the crash-time
           # diagnostic step below depends on it. `debug` input additionally
           # bypasses xcbeautify so the raw log reaches the job output too.
-          # The whole pipeline is backgrounded (instead of run in the
-          # foreground like every other xcodebuild step here) so the crash
-          # watcher below can poll for a new crash report concurrently.
+          #
+          # xcodebuild is backgrounded (instead of run in the foreground
+          # like every other xcodebuild step here) so the crash watcher
+          # below can poll for a new crash report concurrently. Its output
+          # is redirected into a `tee`/`xcbeautify` process substitution
+          # (`> >(...)`) rather than piped with `|` so that `$!` right after
+          # still captures xcodebuild's own PID — backgrounding a `cmd1 |
+          # cmd2 &` pipeline instead makes `$!` the PID of the *last* stage
+          # (cmd2), which has no child processes of its own to signal, so a
+          # kill below would silently fail to touch xcodebuild at all and
+          # leave it running as an orphan holding the simulator.
           if [ "$DEBUG" = "true" ]; then
             xcodebuild test-without-building \
               -scheme "${{ inputs.package-name }}" \
               -destination "${{ matrix.destination }}" \
               -enableCodeCoverage YES \
               -derivedDataPath .xcbuild \
-              "${EXTRA_ARGS[@]}" 2>&1 | tee raw-test-output.log &
+              "${EXTRA_ARGS[@]}" > >(tee raw-test-output.log) 2>&1 &
           else
             xcodebuild test-without-building \
               -scheme "${{ inputs.package-name }}" \
               -destination "${{ matrix.destination }}" \
               -enableCodeCoverage YES \
               -derivedDataPath .xcbuild \
-              "${EXTRA_ARGS[@]}" 2>&1 | tee raw-test-output.log | xcbeautify --renderer github-actions &
+              "${EXTRA_ARGS[@]}" > >(tee raw-test-output.log | xcbeautify --renderer github-actions) 2>&1 &
           fi
           TEST_PID=$!
 
@@ -677,11 +683,12 @@ jobs:
                 IDLE_SECONDS=$(( $(date +%s) - LAST_LOG_CHANGE ))
                 if [ "$IDLE_SECONDS" -ge "$GRACE_SECONDS" ]; then
                   echo "::error::xcodebuild produced no new test output for ${IDLE_SECONDS}s after a crash report appeared — treating it as genuinely stuck and killing the run instead of waiting for the job timeout."
+                  kill -TERM "$TEST_PID" 2>/dev/null || true
                   pkill -TERM -P "$TEST_PID" 2>/dev/null || true
                   sleep 5
-                  pkill -KILL -P "$TEST_PID" 2>/dev/null || true
                   kill -KILL "$TEST_PID" 2>/dev/null || true
-                  wait "$TEST_PID" 2>/dev/null
+                  pkill -KILL -P "$TEST_PID" 2>/dev/null || true
+                  wait "$TEST_PID" 2>/dev/null || true
                   exit 1
                 fi
               fi
@@ -689,7 +696,12 @@ jobs:
             done
           fi
 
-          wait "$TEST_PID"
+          TEST_EXIT=0
+          wait "$TEST_PID" || TEST_EXIT=$?
+          # Drain the tee/xcbeautify process substitution above so its
+          # output finishes flushing before the step ends.
+          wait 2>/dev/null || true
+          exit "$TEST_EXIT"
 
       - name: 🚨 Identify Test Running at Crash Time
         if: failure()

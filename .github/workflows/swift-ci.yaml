@@ -140,9 +140,14 @@ on:
         type: string
       apple-tests-matrix:
         description: >-
-          JSON array of {destination, name} objects for Step 4 Apple tests'
-          matrix, passed straight to `xcodebuild -destination`. Override to
-          run against a different set of simulators/platforms, or a subset
+          JSON array of {destination, name, timeout} objects for Step 4
+          Apple tests' matrix. `destination` is passed straight to
+          `xcodebuild -destination`. `timeout` is optional and overrides
+          apple-tests-timeout-minutes (in minutes) for just that
+          destination — omit it to fall back to apple-tests-timeout-minutes,
+          e.g. for a destination that's known to need longer (or can be
+          capped shorter) than the rest. Override the whole array to run
+          against a different set of simulators/platforms, or a subset
           (e.g. iOS only) — the default covers every Apple platform.
         default: >-
           [{"destination":"platform=iOS Simulator,arch=arm64,name=iPhone 17 Pro,OS=26.5","name":"iOS"},
@@ -184,7 +189,10 @@ on:
         required: false
         type: number
       apple-tests-timeout-minutes:
-        description: 'Timeout (minutes) for each Step 4 Apple Tests matrix leg'
+        description: >-
+          Default timeout (minutes) for each Step 4 Apple Tests matrix leg.
+          Used for any destination in apple-tests-matrix that doesn't set
+          its own `timeout`.
         default: 30
         required: false
         type: number
@@ -536,7 +544,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(inputs.apple-tests-matrix) }}
     runs-on: ${{ inputs.platform }}
-    timeout-minutes: ${{ inputs.apple-tests-timeout-minutes }}
+    timeout-minutes: ${{ matrix.timeout || inputs.apple-tests-timeout-minutes }}
     steps:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v7.0.1

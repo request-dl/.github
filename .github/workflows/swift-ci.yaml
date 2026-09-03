@@ -123,6 +123,22 @@ on:
         default: ''
         required: false
         type: string
+      apple-tests-matrix:
+        description: >-
+          JSON array of {destination, name} objects for Step 4 Apple tests'
+          matrix, passed straight to `xcodebuild -destination`. Override to
+          run against a different set of simulators/platforms, or a subset
+          (e.g. iOS only) — the default covers every Apple platform.
+        default: >-
+          [{"destination":"platform=iOS Simulator,arch=arm64,name=iPhone 17 Pro,OS=26.5","name":"iOS"},
+          {"destination":"platform=iOS Simulator,arch=arm64,name=iPad (A16),OS=26.5","name":"iPadOS"},
+          {"destination":"platform=watchOS Simulator,arch=arm64,name=Apple Watch Series 11 (42mm),OS=26.5","name":"watchOS"},
+          {"destination":"platform=tvOS Simulator,arch=arm64,name=Apple TV 4K (3rd generation) (at 1080p),OS=26.5","name":"tvOS"},
+          {"destination":"platform=visionOS Simulator,arch=arm64,name=Apple Vision Pro,OS=26.5","name":"visionOS"},
+          {"destination":"platform=macOS,arch=arm64,name=My Mac","name":"macOS"},
+          {"destination":"platform=macOS,arch=arm64,variant=Mac Catalyst,name=My Mac","name":"macOS Catalyst"}]
+        required: false
+        type: string
 
       # ── Step 4: Third Party Tests ───────────────────────────
       enable-third-party-tests:
@@ -439,21 +455,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - destination: "platform=iOS Simulator,arch=arm64,name=iPhone 17 Pro,OS=26.5"
-            name: "iOS"
-          - destination: "platform=iOS Simulator,arch=arm64,name=iPad (A16),OS=26.5"
-            name: "iPadOS"
-          - destination: "platform=watchOS Simulator,arch=arm64,name=Apple Watch Series 11 (42mm),OS=26.5"
-            name: "watchOS"
-          - destination: "platform=tvOS Simulator,arch=arm64,name=Apple TV 4K (3rd generation) (at 1080p),OS=26.5"
-            name: "tvOS"
-          - destination: "platform=visionOS Simulator,arch=arm64,name=Apple Vision Pro,OS=26.5"
-            name: "visionOS"
-          - destination: "platform=macOS,arch=arm64,name=My Mac"
-            name: "macOS"
-          - destination: "platform=macOS,arch=arm64,variant=Mac Catalyst,name=My Mac"
-            name: "macOS Catalyst"
+        include: ${{ fromJSON(inputs.apple-tests-matrix) }}
     runs-on: ${{ inputs.platform }}
     timeout-minutes: 30
     steps:
@@ -1072,16 +1074,18 @@ jobs:
 
       - name: 🔍 Verify Apple Coverage Completeness
         if: inputs.enable-apple-tests && inputs.apple-coverage-enabled
+        env:
+          APPLE_TESTS_MATRIX: ${{ inputs.apple-tests-matrix }}
         run: |
           # apple-tests uploads one apple-<name> coverage artifact per
           # matrix leg, but a leg can fail to produce one (e.g. an
           # intermittent Xcode coverage bug, mitigated by warning instead of
           # failing that job) without that being visible here — this job
           # just processes whatever apple-*/ dirs exist. Compare against the
-          # matrix's expected platform list so a missing destination shows
-          # up as a warning instead of silently reporting fewer coverage
-          # numbers to Codecov.
-          EXPECTED_PLATFORMS=("iOS" "iPadOS" "watchOS" "tvOS" "visionOS" "macOS" "macOS Catalyst")
+          # matrix's expected platform list (same input the apple-tests job
+          # uses) so a missing destination shows up as a warning instead of
+          # silently reporting fewer coverage numbers to Codecov.
+          mapfile -t EXPECTED_PLATFORMS < <(printf '%s' "$APPLE_TESTS_MATRIX" | jq -r '.[].name')
           MISSING=()
           for platform in "${EXPECTED_PLATFORMS[@]}"; do
             if [ ! -d "artifacts/apple-${platform}" ]; then

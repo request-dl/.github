@@ -1293,7 +1293,12 @@ jobs:
           # matrix's expected platform list (same input the apple-tests job
           # uses) so a missing destination shows up as a warning instead of
           # silently reporting fewer coverage numbers to Codecov.
-          mapfile -t EXPECTED_PLATFORMS < <(printf '%s' "$APPLE_TESTS_MATRIX" | jq -r '.[].name')
+          # Not `mapfile` (bash 4+ only) — the default macOS runner shell is
+          # Apple's stock /bin/bash 3.2, which doesn't have it.
+          EXPECTED_PLATFORMS=()
+          while IFS= read -r platform; do
+            EXPECTED_PLATFORMS+=("$platform")
+          done < <(printf '%s' "$APPLE_TESTS_MATRIX" | jq -r '.[].name')
           MISSING=()
           for platform in "${EXPECTED_PLATFORMS[@]}"; do
             if [ ! -d "artifacts/apple-${platform}" ]; then

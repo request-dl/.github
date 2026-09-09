@@ -27,10 +27,42 @@ on:
         default: 'macOS-26'
         required: false
         type: string
+      debug:
+        description: 'Verbose CI logs (bypasses `xcbeautify` entirely so raw xcodebuild output is kept)'
+        default: false
+        required: false
+        type: boolean
 
-      # ── Step 1: Format ──────────────────────────────────────
+      # ── Step 1: Header Validation ───────────────────────────
+      enable-header-validation:
+        description: 'Step 1 – Validate license header in *.swift files'
+        default: false
+        required: false
+        type: boolean
+      header-paths:
+        description: 'JSON array of paths to scan for *.swift files'
+        default: '["."]'
+        required: false
+        type: string
+      header-template:
+        description: 'Expected header block; each line is matched against the first lines of every *.swift file'
+        default: ''
+        required: false
+        type: string
+      header-use-regex:
+        description: 'Treat each line of header-template as an extended regular expression instead of literal text'
+        default: false
+        required: false
+        type: boolean
+      header-validation-timeout-minutes:
+        description: 'Timeout (minutes) for Step 1 – Header Validation'
+        default: 5
+        required: false
+        type: number
+
+      # ── Step 2: Format ──────────────────────────────────────
       enable-format:
-        description: 'Step 1 – Validate swift format'
+        description: 'Step 2 – Validate swift format'
         default: true
         required: false
         type: boolean
@@ -42,10 +74,15 @@ on:
         default: '.swift-format'
         required: false
         type: string
+      format-timeout-minutes:
+        description: 'Timeout (minutes) for Step 2 – Format'
+        default: 10
+        required: false
+        type: number
 
-      # ── Step 2: Breaking Changes ────────────────────────────
+      # ── Step 3: Breaking Changes ────────────────────────────
       enable-breaking-changes:
-        description: 'Step 2 – Check API breaking changes'
+        description: 'Step 3 – Check API breaking changes'
         default: false
         required: false
         type: boolean
@@ -58,10 +95,15 @@ on:
         default: false
         required: false
         type: boolean
+      breaking-changes-timeout-minutes:
+        description: 'Timeout (minutes) for Step 3 – Breaking Changes'
+        default: 15
+        required: false
+        type: number
 
-      # ── Step 3: Apple Tests ─────────────────────────────────
+      # ── Step 4: Apple Tests ─────────────────────────────────
       enable-apple-tests:
-        description: 'Step 3 – Run Apple platform tests'
+        description: 'Step 4 – Run Apple platform tests'
         default: false
         required: false
         type: boolean
@@ -77,19 +119,87 @@ on:
         default: false
         required: false
         type: boolean
+      apple-tests-max-parallelization-width:
+        description: >-
+          Caps how many Swift Testing tests run concurrently within a single
+          test process for Step 4 Apple tests
+          (`SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH`). Empty (default)
+          leaves Swift Testing's own default (NCORES * 2) in place. Lower
+          this if a suite with many tests overloads the simulator.
+        default: ''
+        required: false
+        type: string
       apple-tests-parallel-testing-worker-count:
         description: >-
-          Caps xcodebuild's simulator worker count for Step 3 Apple tests
+          Caps xcodebuild's simulator worker count for Step 4 Apple tests
           (`-parallel-testing-worker-count`). Empty (default) leaves Xcode's
           own default in place. Lower this if simulator destinations are
           flaking under CPU/scheduler contention on the runner.
         default: ''
         required: false
         type: string
+      apple-tests-matrix:
+        description: >-
+          JSON array of {destination, name, timeout} objects for Step 4
+          Apple tests' matrix. `destination` is passed straight to
+          `xcodebuild -destination`. `timeout` is optional and overrides
+          apple-tests-timeout-minutes (in minutes) for just that
+          destination — omit it to fall back to apple-tests-timeout-minutes,
+          e.g. for a destination that's known to need longer (or can be
+          capped shorter) than the rest. Override the whole array to run
+          against a different set of simulators/platforms, or a subset
+          (e.g. iOS only) — the default covers every Apple platform.
+        default: >-
+          [{"destination":"platform=iOS Simulator,arch=arm64,name=iPhone 17 Pro,OS=26.5","name":"iOS"},
+          {"destination":"platform=iOS Simulator,arch=arm64,name=iPad (A16),OS=26.5","name":"iPadOS"},
+          {"destination":"platform=watchOS Simulator,arch=arm64,name=Apple Watch Series 11 (42mm),OS=26.5","name":"watchOS"},
+          {"destination":"platform=tvOS Simulator,arch=arm64,name=Apple TV 4K (3rd generation) (at 1080p),OS=26.5","name":"tvOS"},
+          {"destination":"platform=visionOS Simulator,arch=arm64,name=Apple Vision Pro,OS=26.5","name":"visionOS"},
+          {"destination":"platform=macOS,arch=arm64,name=My Mac","name":"macOS"},
+          {"destination":"platform=macOS,arch=arm64,variant=Mac Catalyst,name=My Mac","name":"macOS Catalyst"}]
+        required: false
+        type: string
+      apple-tests-crash-watch-enabled:
+        description: >-
+          Watches ~/Library/Logs/DiagnosticReports (and the system-wide
+          /Library/Logs/DiagnosticReports) for a new crash report while
+          `xcodebuild test-without-building` is running for Step 4 Apple
+          Tests. A crash report alone doesn't mean xcodebuild is hung —
+          Xcode's own post-crash diagnostics collection is expected to run
+          for a while and self-limits at ~10 minutes
+          ("IDETestOperationsObserverDebug: Failure collecting diagnostics
+          ... Timed out after 600.0 seconds") without affecting already
+          finished test results — so this only kills the run if no new line
+          appears in the test output for apple-tests-crash-watch-grace-minutes
+          after a crash report shows up, i.e. xcodebuild looks genuinely
+          stuck rather than just running that collection out. Any crash
+          report captured during the run (whether or not it triggered an
+          early kill) is uploaded as the crash-reports-<name> artifact.
+        default: true
+        required: false
+        type: boolean
+      apple-tests-crash-watch-grace-minutes:
+        description: >-
+          Minutes of no new xcodebuild test output tolerated after a crash
+          report appears before apple-tests-crash-watch-enabled kills the
+          run. Default is set comfortably above Xcode's own ~10-minute
+          diagnostics-collection self-timeout so that legitimate collection
+          isn't mistaken for a hang.
+        default: 12
+        required: false
+        type: number
+      apple-tests-timeout-minutes:
+        description: >-
+          Default timeout (minutes) for each Step 4 Apple Tests matrix leg.
+          Used for any destination in apple-tests-matrix that doesn't set
+          its own `timeout`.
+        default: 30
+        required: false
+        type: number
 
-      # ── Step 3: Third Party Tests ───────────────────────────
+      # ── Step 4: Third Party Tests ───────────────────────────
       enable-third-party-tests:
-        description: 'Step 3 – Run third-party platform tests'
+        description: 'Step 4 – Run third-party platform tests'
         default: false
         required: false
         type: boolean
@@ -97,20 +207,116 @@ on:
         default: false
         required: false
         type: boolean
+      third-party-tests-timeout-minutes:
+        description: 'Timeout (minutes) for each Step 4 Third Party Tests matrix leg'
+        default: 20
+        required: false
+        type: number
 
-      # ── Step 3: Linkage Test (FoundationEssentials) ─────────
+      # ── Step 4: Linkage Test (FoundationEssentials) ─────────
       enable-linkage-test:
-        description: 'Step 3 – Run linkage test for FoundationEssentials (Linux only)'
+        description: 'Step 4 – Run linkage test for FoundationEssentials (Linux only)'
         default: false
         required: false
         type: boolean
+      linkage-test-timeout-minutes:
+        description: 'Timeout (minutes) for Step 4 – Linkage Test'
+        default: 10
+        required: false
+        type: number
 
-      # ── Step 4: Coverage Upload ─────────────────────────────
-      enable-coverage-upload:
-        description: 'Step 4 – Upload coverage to Codecov'
+      # ── Step 4: Android Build ───────────────────────────────
+      enable-android-build:
+        description: 'Step 4 – Cross-compile the package for Android (build only, no test execution)'
         default: false
         required: false
         type: boolean
+      android-swift-sdk:
+        description: 'Swift SDK identifier passed to `swift build --swift-sdk` for the Android cross-compile'
+        default: 'aarch64-unknown-linux-android28'
+        required: false
+        type: string
+      android-toolchain-swift-version:
+        description: 'Host Swift toolchain version to install (must match the Android SDK bundle major.minor)'
+        default: '6.3'
+        required: false
+        type: string
+      android-sdk-url:
+        description: 'Download URL for the official swift.org Swift SDK for Android artifact bundle'
+        default: 'https://download.swift.org/swift-6.3.3-release/android-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_android.artifactbundle.tar.gz'
+        required: false
+        type: string
+      android-sdk-checksum:
+        description: 'Checksum for android-sdk-url, as required by `swift sdk install --checksum`'
+        default: 'd160cc3206dd1886dae3fef2337af5e25ec034692cd0ec225721c56cc69da7f5'
+        required: false
+        type: string
+      android-ndk-version:
+        description: 'Android NDK version (LTS r27d or later required) used to configure the SDK bundle'
+        default: 'r27d'
+        required: false
+        type: string
+      android-build-timeout-minutes:
+        description: 'Timeout (minutes) for Step 4 – Android Build'
+        default: 20
+        required: false
+        type: number
+
+      # ── Step 4: Release Builds ──────────────────────────────
+      enable-release-builds:
+        description: 'Step 4 – Build package in release mode (-c release) across a Swift version matrix (Linux, build only)'
+        default: false
+        required: false
+        type: boolean
+      release-builds-swift-versions:
+        description: 'JSON array of Swift versions to build in release mode'
+        default: '["6.2", "6.3"]'
+        required: false
+        type: string
+      release-builds-timeout-minutes:
+        description: 'Timeout (minutes) for Step 4 – Release Builds (per Swift version leg)'
+        default: 20
+        required: false
+        type: number
+
+      # ── Step 4: Static SDK ──────────────────────────────────
+      enable-static-sdk:
+        description: 'Step 4 – Build package against the static Linux SDK (x86_64-swift-linux-musl)'
+        default: false
+        required: false
+        type: boolean
+      static-sdk-toolchain-swift-version:
+        description: 'Host Swift toolchain version to install (must match the static SDK bundle major.minor)'
+        default: '6.3'
+        required: false
+        type: string
+      static-sdk-url:
+        description: 'Download URL for the official swift.org static Linux SDK artifact bundle'
+        default: 'https://download.swift.org/swift-6.3.3-release/static-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz'
+        required: false
+        type: string
+      static-sdk-checksum:
+        description: 'Checksum for static-sdk-url, as required by `swift sdk install --checksum`'
+        default: '87c3eaf908e67c0e13a84367119e12273cec1d2cd3d81f7d74bb36722d6b607b'
+        required: false
+        type: string
+      static-sdk-timeout-minutes:
+        description: 'Timeout (minutes) for Step 4 – Static SDK'
+        default: 20
+        required: false
+        type: number
+
+      # ── Step 5: Coverage Upload ─────────────────────────────
+      enable-coverage-upload:
+        description: 'Step 5 – Upload coverage to Codecov'
+        default: false
+        required: false
+        type: boolean
+      coverage-upload-timeout-minutes:
+        description: 'Timeout (minutes) for Step 5 – Coverage Upload'
+        default: 15
+        required: false
+        type: number
     secrets:
       CODECOV_TOKEN:
         required: false
@@ -125,6 +331,9 @@ concurrency:
 # ═══════════════════════════════════════════════════════════════
 #  HIERARQUIA
 #
+#  header-validation
+#       │
+#       ▼
 #  format-check
 #       │
 #       ▼
@@ -132,19 +341,104 @@ concurrency:
 #       │
 #       ├──► apple-tests (matrix)
 #       ├──► third-party-tests (matrix)
-#       └──► linkage-test (Linux)
-#                 │
-#                 ▼
-#           coverage-upload
+#       ├──► linkage-test (Linux)
+#       │           │
+#       │           ▼
+#       │     coverage-upload
+#       ├──► android-build (Linux, build only)
+#       ├──► release-builds (Linux/Windows matrix, build only)
+#       └──► static-sdk (Linux musl, build only)
 # ═══════════════════════════════════════════════════════════════
 
 jobs:
   # ── STEP 1 ──────────────────────────────────────────────────
+  header-validation:
+    name: "🪪 Header"
+    if: inputs.enable-header-validation
+    runs-on: ${{ inputs.platform }}
+    timeout-minutes: ${{ inputs.header-validation-timeout-minutes }}
+    steps:
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v7.0.1
+
+      - name: 🪪 Check License Header
+        env:
+          HEADER_TEMPLATE: ${{ inputs.header-template }}
+          HEADER_USE_REGEX: ${{ inputs.header-use-regex }}
+          HEADER_PATHS: ${{ inputs.header-paths }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$HEADER_TEMPLATE" ]; then
+            echo "❌ enable-header-validation is true but header-template is empty"
+            exit 1
+          fi
+
+          header_lines=()
+          while IFS= read -r line || [ -n "$line" ]; do
+            header_lines+=("$line")
+          done < <(printf '%s' "$HEADER_TEMPLATE")
+          line_count=${#header_lines[@]}
+
+          echo "=== Expected header (${line_count} line(s), regex=${HEADER_USE_REGEX}) ==="
+          printf '%s\n' "${header_lines[@]}"
+          echo "==="
+
+          header_paths=()
+          while IFS= read -r path; do
+            header_paths+=("$path")
+          done < <(printf '%s' "$HEADER_PATHS" | jq -r '.[]')
+          echo "=== Scanning paths: ${header_paths[*]} ==="
+
+          failures=0
+          while IFS= read -r -d '' file; do
+            file_lines=()
+            while IFS= read -r line || [ -n "$line" ]; do
+              file_lines+=("$line")
+              if [ "${#file_lines[@]}" -ge "$line_count" ]; then
+                break
+              fi
+            done < "$file"
+
+            ok=true
+            for i in "${!header_lines[@]}"; do
+              expected="${header_lines[$i]}"
+              actual="${file_lines[$i]:-}"
+              if [ "$HEADER_USE_REGEX" == "true" ]; then
+                if ! [[ "$actual" =~ ^${expected}$ ]]; then
+                  ok=false
+                  break
+                fi
+              elif [ "$actual" != "$expected" ]; then
+                ok=false
+                break
+              fi
+            done
+
+            if [ "$ok" = false ]; then
+              echo "❌ $file"
+              failures=$((failures + 1))
+            fi
+          done < <(find "${header_paths[@]}" -type f -name '*.swift' -not -name 'Package.swift' -not -name 'Package@swift-*.swift' -not -path '*/.build/*' -not -path '*/.git/*' -print0)
+
+          if [ "$failures" -gt 0 ]; then
+            echo ""
+            echo "💥 $failures file(s) with missing or invalid license header"
+            exit 1
+          fi
+
+          echo "✅ All Swift files have a valid license header"
+
+  # ── STEP 2 ──────────────────────────────────────────────────
   format-check:
     name: "🎨 Format"
-    if: inputs.enable-format
+    needs: header-validation
+    if: |
+      !cancelled() &&
+      inputs.enable-format &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped')
     runs-on: ${{ inputs.platform }}
-    timeout-minutes: 10
+    timeout-minutes: ${{ inputs.format-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
         uses: SwiftyLab/setup-swift@v1.14.0
@@ -167,18 +461,19 @@ jobs:
           fi
           echo "✅ Formatting check passed"
 
-  # ── STEP 2 ──────────────────────────────────────────────────
+  # ── STEP 3 ──────────────────────────────────────────────────
   breaking-changes:
     name: "💔 Breaking Changes"
-    needs: format-check
+    needs: [header-validation, format-check]
     if: |
-      always() &&
+      !cancelled() &&
       inputs.enable-breaking-changes &&
       !inputs.force-skip-breaking-changes &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       !contains(github.event.pull_request.labels.*.name, 'breaking-changes')
     runs-on: ${{ inputs.platform }}
-    timeout-minutes: 15
+    timeout-minutes: ${{ inputs.breaking-changes-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
         uses: SwiftyLab/setup-swift@v1.14.0
@@ -189,6 +484,16 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
+
+      - name: 📦 Cache SwiftPM Dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/org.swift.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package*.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-deps-
 
       - name: 💔 Check API Breaking Changes
         run: |
@@ -224,35 +529,22 @@ jobs:
           echo "Checking breaking changes against $latest_tag"
           swift package diagnose-api-breaking-changes "$latest_tag"
 
-  # ── STEP 3A ─────────────────────────────────────────────────
+  # ── STEP 4A ─────────────────────────────────────────────────
   apple-tests:
     name: "🍎 ${{ matrix.name }}"
-    needs: [format-check, breaking-changes]
+    needs: [header-validation, format-check, breaking-changes]
     if: |
-      always() &&
+      !cancelled() &&
       inputs.enable-apple-tests &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - destination: "platform=iOS Simulator,arch=arm64,name=iPhone 17 Pro,OS=26.5"
-            name: "iOS"
-          - destination: "platform=iOS Simulator,arch=arm64,name=iPad (A16),OS=26.5"
-            name: "iPadOS"
-          - destination: "platform=watchOS Simulator,arch=arm64,name=Apple Watch Series 11 (42mm),OS=26.5"
-            name: "watchOS"
-          - destination: "platform=tvOS Simulator,arch=arm64,name=Apple TV 4K (3rd generation) (at 1080p),OS=26.5"
-            name: "tvOS"
-          - destination: "platform=visionOS Simulator,arch=arm64,name=Apple Vision Pro,OS=26.5"
-            name: "visionOS"
-          - destination: "platform=macOS,arch=arm64,name=My Mac"
-            name: "macOS"
-          - destination: "platform=macOS,arch=arm64,variant=Mac Catalyst,name=My Mac"
-            name: "macOS Catalyst"
+        include: ${{ fromJSON(inputs.apple-tests-matrix) }}
     runs-on: ${{ inputs.platform }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.timeout || inputs.apple-tests-timeout-minutes }}
     steps:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v7.0.1
@@ -263,19 +555,58 @@ jobs:
       - name: ☑️ Xcode Select
         run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
 
+      - name: 📦 Cache SwiftPM Dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          # xcodebuild clones package dependencies into DerivedData by
+          # default (private per-job, per-destination). Pointing it at a
+          # fixed, cached path instead lets every destination in this
+          # matrix — and every run — reuse the same cloned sources.
+          path: .swiftpm-cache
+          key: macOS-clonedSourcePackages-${{ hashFiles('**/Package*.swift') }}
+          restore-keys: |
+            macOS-clonedSourcePackages-
+
       - name: ⚒️ Build Package
         env:
           NSUnbufferedIO: YES
+          DEBUG: ${{ inputs.debug }}
         run: |
-          set -o pipefail && xcodebuild build-for-testing \
-            -scheme "${{ inputs.package-name }}" \
-            -destination "${{ matrix.destination }}" \
-            -derivedDataPath .xcbuild 2>&1 | xcbeautify --quiet --renderer github-actions
+          set -o pipefail
+
+          # xcbeautify's reformatted output hides exactly what you need when
+          # chasing a build failure. `debug` input bypasses it entirely so
+          # the raw xcodebuild log reaches the job output instead.
+          if [ "$DEBUG" = "true" ]; then
+            xcodebuild build-for-testing \
+              -scheme "${{ inputs.package-name }}" \
+              -destination "${{ matrix.destination }}" \
+              -derivedDataPath .xcbuild \
+              -clonedSourcePackagesDirPath .swiftpm-cache
+          else
+            xcodebuild build-for-testing \
+              -scheme "${{ inputs.package-name }}" \
+              -destination "${{ matrix.destination }}" \
+              -derivedDataPath .xcbuild \
+              -clonedSourcePackagesDirPath .swiftpm-cache 2>&1 | xcbeautify --quiet --renderer github-actions
+          fi
+
+      - name: 📸 Snapshot Existing Crash Reports
+        if: inputs.apple-tests-crash-watch-enabled
+        run: |
+          mkdir -p "$HOME/Library/Logs/DiagnosticReports"
+          find "$HOME/Library/Logs/DiagnosticReports" /Library/Logs/DiagnosticReports \
+            -maxdepth 1 -type f \( -name '*.crash' -o -name '*.ips' \) 2>/dev/null \
+            | sort > /tmp/crash-reports-before.txt
 
       - name: 🧪 Run Tests with Coverage
         env:
           NSUnbufferedIO: YES
+          SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH: ${{ inputs.apple-tests-max-parallelization-width }}
           WORKER_COUNT: ${{ inputs.apple-tests-parallel-testing-worker-count }}
+          DEBUG: ${{ inputs.debug }}
+          CRASH_WATCH: ${{ inputs.apple-tests-crash-watch-enabled }}
+          CRASH_WATCH_GRACE_MINUTES: ${{ inputs.apple-tests-crash-watch-grace-minutes }}
         run: |
           # Empty WORKER_COUNT (the default) leaves Xcode's own parallel
           # testing default in place; a value caps simulator worker count,
@@ -286,12 +617,91 @@ jobs:
             EXTRA_ARGS+=(-parallel-testing-worker-count "$WORKER_COUNT")
           fi
 
-          set -o pipefail && xcodebuild test-without-building \
-            -scheme "${{ inputs.package-name }}" \
-            -destination "${{ matrix.destination }}" \
-            -enableCodeCoverage YES \
-            -derivedDataPath .xcbuild \
-            "${EXTRA_ARGS[@]}" 2>&1 | tee raw-test-output.log | xcbeautify --renderer github-actions
+          # raw-test-output.log is captured either way — the crash-time
+          # diagnostic step below depends on it. `debug` input additionally
+          # bypasses xcbeautify so the raw log reaches the job output too.
+          #
+          # xcodebuild is backgrounded (instead of run in the foreground
+          # like every other xcodebuild step here) so the crash watcher
+          # below can poll for a new crash report concurrently. Its output
+          # is redirected into a `tee`/`xcbeautify` process substitution
+          # (`> >(...)`) rather than piped with `|` so that `$!` right after
+          # still captures xcodebuild's own PID — backgrounding a `cmd1 |
+          # cmd2 &` pipeline instead makes `$!` the PID of the *last* stage
+          # (cmd2), which has no child processes of its own to signal, so a
+          # kill below would silently fail to touch xcodebuild at all and
+          # leave it running as an orphan holding the simulator.
+          if [ "$DEBUG" = "true" ]; then
+            xcodebuild test-without-building \
+              -scheme "${{ inputs.package-name }}" \
+              -destination "${{ matrix.destination }}" \
+              -enableCodeCoverage YES \
+              -derivedDataPath .xcbuild \
+              "${EXTRA_ARGS[@]}" > >(tee raw-test-output.log) 2>&1 &
+          else
+            xcodebuild test-without-building \
+              -scheme "${{ inputs.package-name }}" \
+              -destination "${{ matrix.destination }}" \
+              -enableCodeCoverage YES \
+              -derivedDataPath .xcbuild \
+              "${EXTRA_ARGS[@]}" > >(tee raw-test-output.log | xcbeautify --renderer github-actions) 2>&1 &
+          fi
+          TEST_PID=$!
+
+          if [ "$CRASH_WATCH" = "true" ]; then
+            # A crash report showing up mid-run doesn't by itself mean
+            # xcodebuild is stuck: Xcode's own post-crash diagnostics
+            # collection is expected to take a while and self-limits at
+            # ~10 minutes ("IDETestOperationsObserverDebug: Failure
+            # collecting diagnostics ... Timed out after 600.0 seconds")
+            # without affecting test results that already finished — and
+            # xcodebuild produces no new test-output lines while that
+            # collection is in progress either. Killing the moment a crash
+            # report appears risks tearing down xcodebuild mid-.xcresult
+            # write, corrupting/losing results and coverage for every test
+            # in the run, not just the crashed one. So instead: once a
+            # crash report is seen, only kill once xcodebuild has ALSO gone
+            # $CRASH_WATCH_GRACE_MINUTES with no new line written to
+            # raw-test-output.log — that combination means it's genuinely
+            # stuck rather than just running that collection out. The 🩻
+            # Collect Crash Reports step further down uploads whatever
+            # crash report it finds either way, whether or not this loop is
+            # the one that ends the run.
+            GRACE_SECONDS=$((CRASH_WATCH_GRACE_MINUTES * 60))
+            CRASH_WARNED=""
+            while kill -0 "$TEST_PID" 2>/dev/null; do
+              NEW_CRASH=$(comm -13 /tmp/crash-reports-before.txt \
+                <(find "$HOME/Library/Logs/DiagnosticReports" /Library/Logs/DiagnosticReports \
+                    -maxdepth 1 -type f \( -name '*.crash' -o -name '*.ips' \) 2>/dev/null | sort) \
+                | head -n 1)
+              if [ -n "$NEW_CRASH" ]; then
+                if [ -z "$CRASH_WARNED" ]; then
+                  CRASH_WARNED=1
+                  echo "::warning::New crash report detected while xcodebuild is still running ($NEW_CRASH). This can be Xcode's own (harmless, self-limited to ~10 minutes) post-crash diagnostics collection — only killing the run if no new test output appears for $CRASH_WATCH_GRACE_MINUTES more minute(s)."
+                fi
+                LAST_LOG_CHANGE=$(stat -f %m raw-test-output.log 2>/dev/null || echo 0)
+                IDLE_SECONDS=$(( $(date +%s) - LAST_LOG_CHANGE ))
+                if [ "$IDLE_SECONDS" -ge "$GRACE_SECONDS" ]; then
+                  echo "::error::xcodebuild produced no new test output for ${IDLE_SECONDS}s after a crash report appeared — treating it as genuinely stuck and killing the run instead of waiting for the job timeout."
+                  kill -TERM "$TEST_PID" 2>/dev/null || true
+                  pkill -TERM -P "$TEST_PID" 2>/dev/null || true
+                  sleep 5
+                  kill -KILL "$TEST_PID" 2>/dev/null || true
+                  pkill -KILL -P "$TEST_PID" 2>/dev/null || true
+                  wait "$TEST_PID" 2>/dev/null || true
+                  exit 1
+                fi
+              fi
+              sleep 5
+            done
+          fi
+
+          TEST_EXIT=0
+          wait "$TEST_PID" || TEST_EXIT=$?
+          # Drain the tee/xcbeautify process substitution above so its
+          # output finishes flushing before the step ends.
+          wait 2>/dev/null || true
+          exit "$TEST_EXIT"
 
       - name: 🚨 Identify Test Running at Crash Time
         if: failure()
@@ -311,10 +721,28 @@ jobs:
           # `Test someTest() passed after 0.012 seconds.` — the legacy XCTest
           # phrasing (`Test Case '-[Foo bar]' passed (0.001 seconds)`) always
           # quotes the name. Quotes are optional here so both survive.
-          START_RE = re.compile(r"\b(Test Suite|Test Case|Suite|Test)\s+['\"]?(.+?)['\"]?\s+started\b")
-          END_RE = re.compile(r"\b(Test Suite|Test Case|Suite|Test)\s+['\"]?(.+?)['\"]?\s+(passed|failed|skipped)\b")
+          #
+          # Parameterized swift-testing functions additionally emit a
+          # lowercase `Test case passing N argument(s) to someTest(_:)
+          # started.` / `... passed after Xs.` line per argument value, on
+          # top of the one outer `Test someTest(_:) started/passed` pair for
+          # the function itself. In practice the argument-value description
+          # embedded in that per-case line isn't guaranteed to render
+          # identically between its started and passed/failed lines (long
+          # values get elided differently, ordering isn't stable, etc.), so
+          # treating the two as the same dict key silently fails to pair
+          # them — every argument of every parameterized test then leaks as
+          # a permanent false "still running" entry, even though the test
+          # (and the outer Test entry that wraps it) finished normally. The
+          # outer pair is what actually reflects whether the test hung, so
+          # skip these per-case lines entirely instead of trying to pair
+          # them.
+          START_RE = re.compile(r"\b(Test Suite|Test [Cc]ase|Suite|Test)\s+['\"]?(.+?)['\"]?\s+started\b")
+          END_RE = re.compile(r"\b(Test Suite|Test [Cc]ase|Suite|Test)\s+['\"]?(.+?)['\"]?\s+(passed|failed|skipped)\b")
 
           def is_real_entry(kind, name):
+              if kind == "Test case":
+                  return False
               # swift-testing's top-level "Test run started." / "Test run
               # with N tests passed after Xs." lines aren't a real test —
               # they'd otherwise match as a "Test" named "run" that never
@@ -346,6 +774,34 @@ jobs:
         with:
           name: raw-test-log-${{ matrix.name }}
           path: raw-test-output.log
+
+      - name: 🩻 Collect Crash Reports
+        if: always() && inputs.apple-tests-crash-watch-enabled
+        run: |
+          # Falls back to an empty snapshot if the previous step never ran
+          # (e.g. the 🍺/☑️ setup steps failed first) so every crash report
+          # found here is still treated as new and gets collected.
+          touch /tmp/crash-reports-before.txt
+
+          mkdir -p crash-artifacts
+          comm -13 /tmp/crash-reports-before.txt \
+            <(find "$HOME/Library/Logs/DiagnosticReports" /Library/Logs/DiagnosticReports \
+                -maxdepth 1 -type f \( -name '*.crash' -o -name '*.ips' \) 2>/dev/null | sort) \
+            | while IFS= read -r crash_report; do
+                [ -f "$crash_report" ] && cp "$crash_report" crash-artifacts/
+              done
+
+          if [ -n "$(find crash-artifacts -type f -print -quit)" ]; then
+            echo "::warning::New crash report(s) captured during this test run — see the crash-reports-${{ matrix.name }} artifact."
+          fi
+
+      - name: 📤 Upload Crash Reports
+        if: always() && inputs.apple-tests-crash-watch-enabled
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: crash-reports-${{ matrix.name }}
+          path: crash-artifacts/
+          if-no-files-found: ignore
 
       - name: 🔀 Extract Coverage Report
         if: inputs.apple-coverage-enabled
@@ -463,13 +919,14 @@ jobs:
           name: apple-${{ matrix.name }}
           path: coverage-artifacts/
 
-  # ── STEP 3B ─────────────────────────────────────────────────
+  # ── STEP 4B ─────────────────────────────────────────────────
   third-party-tests:
     name: "🔧 ${{ matrix.name }}"
-    needs: [format-check, breaking-changes]
+    needs: [header-validation, format-check, breaking-changes]
     if: |
-      always() &&
+      !cancelled() &&
       inputs.enable-third-party-tests &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
     strategy:
@@ -481,7 +938,7 @@ jobs:
           - platform: "windows-latest"
             name: "Windows"
     runs-on: ${{ matrix.platform }}
-    timeout-minutes: 20
+    timeout-minutes: ${{ inputs.third-party-tests-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
         uses: SwiftyLab/setup-swift@v1.14.0
@@ -490,6 +947,16 @@ jobs:
 
       - name: ⬇️ Get Sources
         uses: actions/checkout@v7.0.1
+
+      - name: 📦 Cache SwiftPM Dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/org.swift.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package*.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-deps-
 
       - name: ⚒️ Test Package
         run: swift test --enable-code-coverage
@@ -522,17 +989,18 @@ jobs:
           name: third-party-${{ matrix.name }}
           path: coverage-artifacts/
 
-  # ── STEP 3C: Linkage Test (FoundationEssentials) ───────────
+  # ── STEP 4C: Linkage Test (FoundationEssentials) ───────────
   linkage-test:
     name: "🔗 Linkage Test (FoundationEssentials)"
-    needs: [format-check, breaking-changes]
+    needs: [header-validation, format-check, breaking-changes]
     if: |
-      always() &&
+      !cancelled() &&
       inputs.enable-linkage-test &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: ${{ inputs.linkage-test-timeout-minutes }}
     steps:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v7.0.1
@@ -541,6 +1009,16 @@ jobs:
         uses: SwiftyLab/setup-swift@v1.14.0
         with:
           swift-version: ${{ inputs.swift-version }}
+
+      - name: 📦 Cache SwiftPM Dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/org.swift.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package*.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-deps-
 
       - name: 🔗 Setup Linkage Test Package
         env:
@@ -621,16 +1099,172 @@ jobs:
             echo 'The package correctly uses FoundationEssentials'
           fi
 
-  # ── STEP 4 ──────────────────────────────────────────────────
+  # ── STEP 4D: Android Build ──────────────────────────────────
+  android-build:
+    name: "🤖 Android"
+    needs: [header-validation, format-check, breaking-changes]
+    if: |
+      !cancelled() &&
+      inputs.enable-android-build &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
+      (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
+      (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.android-build-timeout-minutes }}
+    steps:
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.14.0
+        with:
+          swift-version: ${{ inputs.android-toolchain-swift-version }}
+
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v7.0.1
+
+      - name: 📦 Cache SwiftPM Dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/org.swift.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package*.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-deps-
+
+      - name: 🤖 Install Android Swift SDK + NDK
+        run: |
+          set -e
+          swift sdk install "${{ inputs.android-sdk-url }}" \
+            --checksum "${{ inputs.android-sdk-checksum }}"
+          swift sdk list
+
+          # The artifact bundle's info.json declares its Swift SDK variant
+          # under a "swift-android" relative path, which is where the NDK
+          # setup script lives. swift.org's own docs assume it lands at
+          # ~/.swiftpm/swift-sdks/<bundle>/swift-android, but on this
+          # toolchain that directory doesn't exist at all (confirmed: `find
+          # ~/.swiftpm/swift-sdks` itself fails with "No such file or
+          # directory") — so rather than guess another fixed base path,
+          # search the whole filesystem for wherever `swift sdk install`
+          # actually put it.
+          SWIFT_ANDROID_DIR=$(find / \( -path /proc -o -path /sys -o -path /dev \) -prune -o -type d -name 'swift-android' -print 2>/dev/null | head -n 1)
+          if [ -z "$SWIFT_ANDROID_DIR" ]; then
+            echo "❌ Could not locate a 'swift-android' directory anywhere on disk"
+            echo "HOME=$HOME"
+            env | grep -i swift || true
+            find "$HOME" -maxdepth 3
+            exit 1
+          fi
+          echo "Found: $SWIFT_ANDROID_DIR"
+          cd "$SWIFT_ANDROID_DIR"
+
+          curl -fSL -o ndk.zip \
+            "https://dl.google.com/android/repository/android-ndk-${{ inputs.android-ndk-version }}-linux.zip"
+          unzip -qo ndk.zip
+          export ANDROID_NDK_HOME="$PWD/android-ndk-${{ inputs.android-ndk-version }}"
+          ./scripts/setup-android-sdk.sh
+
+      - name: 🤖 Cross-compile for Android
+        run: swift build --swift-sdk "${{ inputs.android-swift-sdk }}" --static-swift-stdlib
+
+  # ── STEP 4E: Release Builds ─────────────────────────────────
+  release-builds:
+    name: "🚀 Release (Swift ${{ matrix.swift-version }})"
+    needs: [header-validation, format-check, breaking-changes]
+    if: |
+      !cancelled() &&
+      inputs.enable-release-builds &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
+      (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
+      (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix:
+        swift-version: ${{ fromJSON(inputs.release-builds-swift-versions) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.release-builds-timeout-minutes }}
+    steps:
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.14.0
+        with:
+          swift-version: ${{ matrix.swift-version }}
+
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v7.0.1
+
+      - name: 📦 Cache SwiftPM Dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/org.swift.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-deps-release-${{ matrix.swift-version }}-${{ hashFiles('**/Package*.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-deps-release-${{ matrix.swift-version }}-
+            ${{ runner.os }}-swiftpm-deps-
+
+      - name: 🚀 Build Package (Release)
+        run: |
+          # Packages commonly have test-support targets (e.g. a shared
+          # RequestDLTestSupport-style helper) that use `@testable import`.
+          # SwiftPM doesn't enable testability for -c release builds by
+          # default, so those targets fail to compile even though they're
+          # not part of the shipped product — and which targets actually
+          # get pulled into a bare `swift build -c release` isn't reliably
+          # scoped by --product/--target across SwiftPM versions. Forcing
+          # testability on sidesteps that entirely.
+          swift build -c release -Xswiftc -enable-testing
+
+  # ── STEP 4F: Static SDK ─────────────────────────────────────
+  static-sdk:
+    name: "📦 Static SDK"
+    needs: [header-validation, format-check, breaking-changes]
+    if: |
+      !cancelled() &&
+      inputs.enable-static-sdk &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
+      (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
+      (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.static-sdk-timeout-minutes }}
+    steps:
+      - name: ☑️ Swift Select
+        uses: SwiftyLab/setup-swift@v1.14.0
+        with:
+          swift-version: ${{ inputs.static-sdk-toolchain-swift-version }}
+
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v7.0.1
+
+      - name: 📦 Cache SwiftPM Dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/org.swift.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-deps-${{ hashFiles('**/Package*.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-deps-
+
+      - name: 📦 Install Static Linux SDK
+        run: |
+          set -e
+          swift sdk install "${{ inputs.static-sdk-url }}" \
+            --checksum "${{ inputs.static-sdk-checksum }}"
+          swift sdk list
+
+      - name: 📦 Build Package (Static SDK)
+        run: swift build --swift-sdk x86_64-swift-linux-musl -Xswiftc -enable-testing
+
+  # ── STEP 5 ──────────────────────────────────────────────────
   coverage-upload:
     name: "📤 Coverage Upload"
     needs: [apple-tests, third-party-tests, linkage-test]
     if: |
-      always() &&
+      !cancelled() &&
       inputs.enable-coverage-upload &&
       (needs.apple-tests.result != 'cancelled' || needs.third-party-tests.result != 'cancelled')
     runs-on: ${{ inputs.platform }}
-    timeout-minutes: 15
+    timeout-minutes: ${{ inputs.coverage-upload-timeout-minutes }}
     steps:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v7.0.1
@@ -648,16 +1282,23 @@ jobs:
 
       - name: 🔍 Verify Apple Coverage Completeness
         if: inputs.enable-apple-tests && inputs.apple-coverage-enabled
+        env:
+          APPLE_TESTS_MATRIX: ${{ inputs.apple-tests-matrix }}
         run: |
           # apple-tests uploads one apple-<name> coverage artifact per
           # matrix leg, but a leg can fail to produce one (e.g. an
           # intermittent Xcode coverage bug, mitigated by warning instead of
           # failing that job) without that being visible here — this job
           # just processes whatever apple-*/ dirs exist. Compare against the
-          # matrix's expected platform list so a missing destination shows
-          # up as a warning instead of silently reporting fewer coverage
-          # numbers to Codecov.
-          EXPECTED_PLATFORMS=("iOS" "iPadOS" "watchOS" "tvOS" "visionOS" "macOS" "macOS Catalyst")
+          # matrix's expected platform list (same input the apple-tests job
+          # uses) so a missing destination shows up as a warning instead of
+          # silently reporting fewer coverage numbers to Codecov.
+          # Not `mapfile` (bash 4+ only) — the default macOS runner shell is
+          # Apple's stock /bin/bash 3.2, which doesn't have it.
+          EXPECTED_PLATFORMS=()
+          while IFS= read -r platform; do
+            EXPECTED_PLATFORMS+=("$platform")
+          done < <(printf '%s' "$APPLE_TESTS_MATRIX" | jq -r '.[].name')
           MISSING=()
           for platform in "${EXPECTED_PLATFORMS[@]}"; do
             if [ ! -d "artifacts/apple-${platform}" ]; then
@@ -757,7 +1398,7 @@ jobs:
           done
 
       - name: 📋 List Generated LCOV Files
-        run: ls -la *.lcov
+        run: ls -la -- *.lcov
 
       - name: 📦 Upload to Codecov
         uses: codecov/codecov-action@v7.0.0

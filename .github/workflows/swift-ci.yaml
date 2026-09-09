@@ -935,8 +935,8 @@ jobs:
         include:
           - platform: "ubuntu-latest"
             name: "Linux"
-          # - platform: "windows-latest"
-          #   name: "Windows"
+          - platform: "windows-latest"
+            name: "Windows"
     runs-on: ${{ matrix.platform }}
     timeout-minutes: ${{ inputs.third-party-tests-timeout-minutes }}
     steps:

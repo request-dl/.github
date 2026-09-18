@@ -465,8 +465,13 @@ jobs:
   breaking-changes:
     name: "💔 Breaking Changes"
     needs: [header-validation, format-check]
+    # Only a real PR has a meaningful "previous tag vs. this ref" comparison to make; a push to
+    # main has nothing to diff against here. Gated at the job level (not just inside the run
+    # step below) so a push to main skips this job entirely instead of spinning up a runner,
+    # checking out the repo, and restoring the SwiftPM cache just to immediately no-op.
     if: |
       !cancelled() &&
+      github.event_name == 'pull_request' &&
       inputs.enable-breaking-changes &&
       !inputs.force-skip-breaking-changes &&
       (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
@@ -497,12 +502,6 @@ jobs:
 
       - name: 💔 Check API Breaking Changes
         run: |
-          # ── Skip on push to main ────────────────────────────
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "Push to main detected, skipping"
-            exit 0
-          fi
-
           # ── Detecção automática por major bump ──────────────
           if [ "${{ inputs.skip-on-major-update }}" == "true" ]; then
             latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")

@@ -1321,7 +1321,14 @@ jobs:
           import sys
 
           HEADER_RE = re.compile(r'^(.+):$')
-          DATA_RE = re.compile(r'^(\d+): (\*|\d+)$')
+          # `xccov` right-aligns line numbers to the widest one in the file ("  9: 1", " 10: 0"), and
+          # follows a line that has sub-line regions with "N: count [" plus a "(col, len, count)" list.
+          # Neither the leading whitespace nor the trailing "[" may stop a line from matching, or every
+          # line but those at the file's widest number width is silently dropped.
+          DATA_RE = re.compile(r'^\s*(\d+): (\*|\d+)')
+          # Same exclusion the llvm-cov path applies below (-ignore-filename-regex): test code and
+          # build products aren't the package's coverage.
+          IGNORED_RE = re.compile(r'/(Tests|\.build)/')
 
 
           def convert(input_path, output_path):
@@ -1329,7 +1336,7 @@ jobs:
               lines_buffer = []
 
               def flush(out):
-                  if current_file is None:
+                  if current_file is None or IGNORED_RE.search(current_file):
                       return
                   out.write(f"SF:{current_file}\n")
                   for line_no, count in lines_buffer:

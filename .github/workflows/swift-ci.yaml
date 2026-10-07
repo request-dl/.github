@@ -446,7 +446,7 @@ jobs:
     timeout-minutes: ${{ inputs.format-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
-        uses: SwiftyLab/setup-swift@v1.14.0
+        uses: SwiftyLab/setup-swift@v1.14.1
         with:
           swift-version: ${{ inputs.format-swift-version }}
 
@@ -481,7 +481,7 @@ jobs:
     timeout-minutes: ${{ inputs.breaking-changes-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
-        uses: SwiftyLab/setup-swift@v1.14.0
+        uses: SwiftyLab/setup-swift@v1.14.1
         with:
           swift-version: ${{ inputs.swift-version }}
 
@@ -980,7 +980,7 @@ jobs:
     timeout-minutes: ${{ inputs.third-party-tests-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
-        uses: SwiftyLab/setup-swift@v1.14.0
+        uses: SwiftyLab/setup-swift@v1.14.1
         with:
           swift-version: ${{ inputs.swift-version }}
 
@@ -1045,7 +1045,7 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: ☑️ Swift Select
-        uses: SwiftyLab/setup-swift@v1.14.0
+        uses: SwiftyLab/setup-swift@v1.14.1
         with:
           swift-version: ${{ inputs.swift-version }}
 
@@ -1152,7 +1152,7 @@ jobs:
     timeout-minutes: ${{ inputs.android-build-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
-        uses: SwiftyLab/setup-swift@v1.14.0
+        uses: SwiftyLab/setup-swift@v1.14.1
         with:
           swift-version: ${{ inputs.android-toolchain-swift-version }}
 
@@ -1223,7 +1223,7 @@ jobs:
     timeout-minutes: ${{ inputs.release-builds-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
-        uses: SwiftyLab/setup-swift@v1.14.0
+        uses: SwiftyLab/setup-swift@v1.14.1
         with:
           swift-version: ${{ matrix.swift-version }}
 
@@ -1267,7 +1267,7 @@ jobs:
     timeout-minutes: ${{ inputs.static-sdk-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
-        uses: SwiftyLab/setup-swift@v1.14.0
+        uses: SwiftyLab/setup-swift@v1.14.1
         with:
           swift-version: ${{ inputs.static-sdk-toolchain-swift-version }}
 

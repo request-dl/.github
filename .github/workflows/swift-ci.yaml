@@ -322,10 +322,15 @@ on:
         required: false
 
 # Cancel any in-progress or queued run for the same repo + ref when a new
-# run is triggered (e.g. new push), so stale xcodebuild/swift test
-# processes don't keep running and don't sit blocking the queue.
+# run is triggered (e.g. new push to a pull request), so stale xcodebuild/swift
+# test processes don't keep running and don't sit blocking the queue.
+#
+# A `push` event is the exception: it is a merge into a long-lived branch, and
+# every merge deserves its own verdict. Keyed by ref alone, two merges a few
+# minutes apart made the second one cancel the first one's Apple legs midway,
+# leaving that commit with no result at all.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.repository }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.repository }}-${{ github.ref }}${{ github.event_name == 'push' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 # ═══════════════════════════════════════════════════════════════
@@ -574,22 +579,48 @@ jobs:
         run: |
           set -o pipefail
 
-          # xcbeautify's reformatted output hides exactly what you need when
-          # chasing a build failure. `debug` input bypasses it entirely so
-          # the raw xcodebuild log reaches the job output instead.
-          if [ "$DEBUG" = "true" ]; then
-            xcodebuild build-for-testing \
-              -scheme "${{ inputs.package-name }}" \
-              -destination "${{ matrix.destination }}" \
-              -derivedDataPath .xcbuild \
-              -clonedSourcePackagesDirPath .swiftpm-cache
-          else
-            xcodebuild build-for-testing \
-              -scheme "${{ inputs.package-name }}" \
-              -destination "${{ matrix.destination }}" \
-              -derivedDataPath .xcbuild \
-              -clonedSourcePackagesDirPath .swiftpm-cache 2>&1 | xcbeautify --quiet --renderer github-actions
-          fi
+          build() {
+            # xcbeautify's reformatted output hides exactly what you need
+            # when chasing a build failure. `debug` input bypasses it
+            # entirely so the raw xcodebuild log reaches the job output
+            # instead.
+            if [ "$DEBUG" = "true" ]; then
+              xcodebuild build-for-testing \
+                -scheme "${{ inputs.package-name }}" \
+                -destination "${{ matrix.destination }}" \
+                -derivedDataPath .xcbuild \
+                -clonedSourcePackagesDirPath .swiftpm-cache
+            else
+              xcodebuild build-for-testing \
+                -scheme "${{ inputs.package-name }}" \
+                -destination "${{ matrix.destination }}" \
+                -derivedDataPath .xcbuild \
+                -clonedSourcePackagesDirPath .swiftpm-cache 2>&1 | xcbeautify --quiet --renderer github-actions
+            fi
+          }
+
+          # Exit status 70 is xcodebuild failing to resolve the destination
+          # ("Unable to find a device matching the provided destination
+          # specifier"), not a compile error: the runner's CoreSimulator
+          # service sometimes hasn't published its devices yet, and the very
+          # same destination resolves a minute later. That used to fail a
+          # leg for good (and with it the whole run) over a hiccup that has
+          # nothing to do with the code, so give it a few tries.
+          ATTEMPT=1
+          while true; do
+            STATUS=0
+            build || STATUS=$?
+            if [ "$STATUS" -eq 0 ]; then
+              break
+            fi
+            if [ "$STATUS" -ne 70 ] || [ "$ATTEMPT" -ge 3 ]; then
+              exit "$STATUS"
+            fi
+            echo "::warning::xcodebuild could not resolve the destination (attempt $ATTEMPT of 3); retrying once the simulators are listed again."
+            xcrun simctl list devices available || true
+            sleep $((ATTEMPT * 30))
+            ATTEMPT=$((ATTEMPT + 1))
+          done
 
       - name: 📸 Snapshot Existing Crash Reports
         if: inputs.apple-tests-crash-watch-enabled
@@ -603,6 +634,14 @@ jobs:
         env:
           NSUnbufferedIO: YES
           SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH: ${{ inputs.apple-tests-max-parallelization-width }}
+          # xcodebuild only forwards to a *simulator's* test process the
+          # variables it finds under this prefix (it strips the prefix on
+          # the way in); a bare SWT_* above is read by the macOS and Mac
+          # Catalyst destinations, which run on the host, and silently
+          # ignored by every iOS/iPadOS/watchOS/tvOS/visionOS one. Without
+          # it the cap was a no-op on the simulators, which then ran
+          # Swift Testing at its default width (twice the core count).
+          TEST_RUNNER_SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH: ${{ inputs.apple-tests-max-parallelization-width }}
           WORKER_COUNT: ${{ inputs.apple-tests-parallel-testing-worker-count }}
           DEBUG: ${{ inputs.debug }}
           CRASH_WATCH: ${{ inputs.apple-tests-crash-watch-enabled }}
@@ -1262,7 +1301,8 @@ jobs:
     if: |
       !cancelled() &&
       inputs.enable-coverage-upload &&
-      (needs.apple-tests.result != 'cancelled' || needs.third-party-tests.result != 'cancelled')
+      (needs.apple-tests.result == 'success' || needs.apple-tests.result == 'failure' ||
+       needs.third-party-tests.result == 'success' || needs.third-party-tests.result == 'failure')
     runs-on: ${{ inputs.platform }}
     timeout-minutes: ${{ inputs.coverage-upload-timeout-minutes }}
     steps:

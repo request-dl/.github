@@ -248,7 +248,7 @@ on:
         type: string
       android-sdk-checksum:
         description: 'Checksum for android-sdk-url, as required by `swift sdk install --checksum`'
-        default: 'd160cc3206dd1886dae3fef2337af5e25ec034692cd0ec225721c56cc69da7f5'
+        default: 'a356b79f8f1daa6ae3a66f4c556966ca20c0208b3659805cf30a83a0a31d6772'
         required: false
         type: string
       android-ndk-version:
@@ -297,7 +297,7 @@ on:
         type: string
       static-sdk-checksum:
         description: 'Checksum for static-sdk-url, as required by `swift sdk install --checksum`'
-        default: '87c3eaf908e67c0e13a84367119e12273cec1d2cd3d81f7d74bb36722d6b607b'
+        default: 'cef5592d7430ed3c5ae1ddda479849c6f5252bd94a5723db1559f984caf38a7c'
         required: false
         type: string
       static-sdk-timeout-minutes:

@@ -484,9 +484,6 @@ jobs:
       !contains(github.event.pull_request.labels.*.name, 'breaking-changes')
     runs-on: ${{ inputs.platform }}
     timeout-minutes: ${{ inputs.breaking-changes-timeout-minutes }}
-    env:
-      # Without it swift-build finds no macOS platform on the xcode-27 image.
-      DEVELOPER_DIR: /Applications/Xcode_${{ inputs.xcode-version }}.app
     steps:
       - name: ☑️ Swift Select
         uses: SwiftyLab/setup-swift@v1.14.1
@@ -510,6 +507,15 @@ jobs:
 
       - name: 💔 Check API Breaking Changes
         run: |
+          # setup-swift points DEVELOPER_DIR and TOOLCHAINS at the swift.org toolchain, whose
+          # swift-build finds no macOS platform. Use the selected Xcode's own toolchain instead.
+          xcode="/Applications/Xcode_${{ inputs.xcode-version }}.app"
+          if [ -d "$xcode" ]; then
+            export DEVELOPER_DIR="$xcode"
+            unset TOOLCHAINS
+          fi
+          swift --version
+
           # ── Detecção automática por major bump ──────────────
           if [ "${{ inputs.skip-on-major-update }}" == "true" ]; then
             latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")

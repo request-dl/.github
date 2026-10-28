@@ -971,7 +971,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: "ubuntu-latest"
+          # ubuntu-latest is 26.04 now, whose libxml2.so.16 breaks the 24.04 Swift toolchain.
+          - platform: "ubuntu-24.04"
             name: "Linux"
           # - platform: "windows-latest"
           #   name: "Windows"
@@ -1037,7 +1038,7 @@ jobs:
       (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.linkage-test-timeout-minutes }}
     steps:
       - name: ⬇️ Get Sources
@@ -1147,7 +1148,7 @@ jobs:
       (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.android-build-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
@@ -1218,7 +1219,7 @@ jobs:
       fail-fast: false
       matrix:
         swift-version: ${{ fromJSON(inputs.release-builds-swift-versions) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.release-builds-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
@@ -1262,7 +1263,7 @@ jobs:
       (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
       (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
       (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.static-sdk-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select

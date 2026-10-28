@@ -485,7 +485,10 @@ jobs:
     runs-on: ${{ inputs.platform }}
     timeout-minutes: ${{ inputs.breaking-changes-timeout-minutes }}
     steps:
+      # On macOS the selected Xcode already ships the Swift to build with. The swift.org toolchain
+      # makes swift-build fail on the xcode-27 image ("missing required default toolchain").
       - name: ☑️ Swift Select
+        if: runner.os != 'macOS'
         uses: SwiftyLab/setup-swift@v1.14.1
         with:
           swift-version: ${{ inputs.swift-version }}
@@ -507,13 +510,9 @@ jobs:
 
       - name: 💔 Check API Breaking Changes
         run: |
-          # setup-swift points DEVELOPER_DIR and TOOLCHAINS at the swift.org toolchain, whose
-          # swift-build finds no macOS platform. Use the selected Xcode's own toolchain instead.
           xcode="/Applications/Xcode_${{ inputs.xcode-version }}.app"
-          if [ -d "$xcode" ]; then
+          if [ "$RUNNER_OS" == "macOS" ] && [ -d "$xcode" ]; then
             export DEVELOPER_DIR="$xcode"
-            unset TOOLCHAINS
-            export PATH="$xcode/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin:$PATH"
           fi
           swift --version
 

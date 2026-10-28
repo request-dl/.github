@@ -513,6 +513,7 @@ jobs:
           if [ -d "$xcode" ]; then
             export DEVELOPER_DIR="$xcode"
             unset TOOLCHAINS
+            export PATH="$xcode/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin:$PATH"
           fi
           swift --version
 

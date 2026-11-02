@@ -850,6 +850,34 @@ jobs:
           path: crash-artifacts/
           if-no-files-found: ignore
 
+      - name: 🗂️ Collect Result Bundle
+        if: failure()
+        run: |
+          # The raw log and the crash report say *that* something died; the
+          # .xcresult is what says what the test runner recorded about it
+          # (per-test results, the crash log Xcode attaches to a crashed
+          # test, console output, timeline). It lives under the hidden
+          # .xcbuild derived data dir, which upload-artifact skips by
+          # default, so it is copied out to a visible directory first.
+          # Several can exist when xcodebuild retried; their names are
+          # timestamped, so copying them side by side doesn't collide.
+          mkdir -p xcresult-artifacts
+          find .xcbuild -name "*.xcresult" -type d -prune \
+            -exec cp -R {} xcresult-artifacts/ \;
+
+      - name: 📤 Upload Result Bundle
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: xcresult-${{ matrix.name }}
+          path: xcresult-artifacts/
+          # A build failure never reaches test-without-building, so there is
+          # no bundle to upload; that's expected, not worth a warning.
+          if-no-files-found: ignore
+          # Bundles are large (coverage data is included) and only useful
+          # while the failure is still being looked at.
+          retention-days: 7
+
       - name: 🔀 Extract Coverage Report
         if: inputs.apple-coverage-enabled
         run: |

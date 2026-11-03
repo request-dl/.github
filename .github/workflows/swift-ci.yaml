@@ -140,13 +140,21 @@ on:
         type: string
       apple-tests-matrix:
         description: >-
-          JSON array of {destination, name, timeout} objects for Step 4
+          JSON array of {destination, name, timeout, rerun} objects for Step 4
           Apple tests' matrix. `destination` is passed straight to
           `xcodebuild -destination`. `timeout` is optional and overrides
           apple-tests-timeout-minutes (in minutes) for just that
           destination — omit it to fall back to apple-tests-timeout-minutes,
           e.g. for a destination that's known to need longer (or can be
-          capped shorter) than the rest. Override the whole array to run
+          capped shorter) than the rest. `rerun` is optional too: a number
+          of extra attempts that makes the leg run again, alone, the tests
+          xcodebuild reports as "Test crashed with signal term/kill" (what
+          happens to a test running when the runner shuts the simulator down
+          under it), as long as those are the only failures. Omit it, the
+          default, to run every test exactly once. `-retry-tests-on-failure`
+          does not cover this case: it does not run again a test that was
+          killed with the simulator.
+          Override the whole array to run
           against a different set of simulators/platforms, or a subset
           (e.g. iOS only) — the default covers every Apple platform.
         default: >-
@@ -568,6 +576,9 @@ jobs:
       - name: ☑️ Xcode Select
         run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
 
+      - name: 🕰️ Mark Job Start Time
+        run: date -v-2M '+%Y-%m-%d %H:%M:%S' > /tmp/apple-tests-start-time.txt
+
       - name: 📦 Cache SwiftPM Dependencies
         uses: actions/cache@v6.1.0
         with:
@@ -651,6 +662,7 @@ jobs:
           # Swift Testing at its default width (twice the core count).
           TEST_RUNNER_SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH: ${{ inputs.apple-tests-max-parallelization-width }}
           WORKER_COUNT: ${{ inputs.apple-tests-parallel-testing-worker-count }}
+          RERUN_ATTEMPTS: ${{ matrix.rerun }}
           DEBUG: ${{ inputs.debug }}
           CRASH_WATCH: ${{ inputs.apple-tests-crash-watch-enabled }}
           CRASH_WATCH_GRACE_MINUTES: ${{ inputs.apple-tests-crash-watch-grace-minutes }}
@@ -748,6 +760,84 @@ jobs:
           # Drain the tee/xcbeautify process substitution above so its
           # output finishes flushing before the step ends.
           wait 2>/dev/null || true
+
+          # A destination that sets `rerun` in apple-tests-matrix gets the
+          # tests that were killed under it (the runner shutting the
+          # simulator down mid-run) run again, alone, up to that many times.
+          # Only when every failure is of that kind: a test that failed on
+          # its own keeps the leg red. `-retry-tests-on-failure` can't be
+          # used for this, it does not run a test again that died with the
+          # simulator.
+          cat > /tmp/killed_tests.py << 'PYEOF'
+          import json
+          import re
+          import sys
+
+          # Prints one `<bundle>/<suite>/<test>` per test that failed only because the process was killed
+          # (`Test crashed with signal term/kill`). Prints nothing when any test failed another way.
+          killed = []
+          others = []
+
+
+          def failure_messages(node):
+              if node.get("nodeType") == "Failure Message":
+                  yield node.get("name", "")
+              for child in node.get("children", []):
+                  yield from failure_messages(child)
+
+
+          def walk(node, bundle):
+              if node.get("nodeType") == "Unit test bundle":
+                  bundle = node["name"]
+              if node.get("nodeType") == "Test Case" and node.get("result") == "Failed":
+                  messages = list(failure_messages(node))
+                  identifier = node.get("nodeIdentifier", node["name"])
+                  if messages and all(re.search(r"crashed with signal (term|kill)", m) for m in messages):
+                      killed.append(bundle + "/" + identifier)
+                  else:
+                      others.append(identifier)
+              for child in node.get("children", []):
+                  walk(child, bundle)
+
+
+          for node in json.load(sys.stdin).get("testNodes", []):
+              walk(node, "")
+
+          if not others:
+              print("\n".join(killed))
+          PYEOF
+
+          RESULT=$(find .xcbuild/Logs/Test -maxdepth 1 -name '*.xcresult' -type d -print0 2>/dev/null \
+            | xargs -0 ls -td 2>/dev/null | head -n 1)
+          RERUN=0
+          while [ "$TEST_EXIT" -ne 0 ] && [ -n "$RESULT" ] && [ "$RERUN" -lt "${RERUN_ATTEMPTS:-0}" ]; do
+            ONLY_TESTING=()
+            while IFS= read -r test_id; do
+              [ -n "$test_id" ] && ONLY_TESTING+=("-only-testing:$test_id")
+            done < <(xcrun xcresulttool get test-results tests --path "$RESULT" 2>/dev/null | python3 /tmp/killed_tests.py)
+
+            if [ "${#ONLY_TESTING[@]}" -eq 0 ]; then
+              break
+            fi
+
+            RERUN=$((RERUN + 1))
+            RESULT="rerun-$RERUN.xcresult"
+            echo "::warning::Running ${#ONLY_TESTING[@]} test(s) killed with the simulator again (rerun $RERUN of $RERUN_ATTEMPTS): ${ONLY_TESTING[*]#-only-testing:}"
+
+            xcodebuild test-without-building \
+              -scheme "${{ inputs.package-name }}" \
+              -destination "${{ matrix.destination }}" \
+              -derivedDataPath .xcbuild \
+              -resultBundlePath "$RESULT" \
+              "${ONLY_TESTING[@]}" \
+              "${EXTRA_ARGS[@]}" > >(tee -a raw-test-output.log | xcbeautify --renderer github-actions) 2>&1 &
+            RERUN_PID=$!
+
+            TEST_EXIT=0
+            wait "$RERUN_PID" || TEST_EXIT=$?
+            wait 2>/dev/null || true
+          done
+
           exit "$TEST_EXIT"
 
       - name: 🚨 Identify Test Running at Crash Time
@@ -821,6 +911,31 @@ jobs:
         with:
           name: raw-test-log-${{ matrix.name }}
           path: raw-test-output.log
+
+      - name: 🪵 Collect Simulator Infrastructure Log
+        if: always()
+        run: |
+          # The .xcresult only carries simdiskimaged.log / CoreSimulator.log
+          # when a leg fails, which leaves nothing to compare a green leg
+          # against. This keeps the same events (runtime volume mounts and
+          # unmounts, device shutdowns) for every leg, red or green, from
+          # the start of the job (the first unmount comes before any test). Never
+          # fails the step: it is diagnostics only.
+          START="$(cat /tmp/apple-tests-start-time.txt 2>/dev/null || date -v-2H '+%Y-%m-%d %H:%M:%S')"
+          /usr/bin/log show --info --start "$START" \
+            --predicate 'process == "simdiskimaged" OR process == "CoreSimulatorService"' \
+            > sim-infra.log 2>&1 || true
+          echo "Captured $(wc -l < sim-infra.log | tr -d ' ') line(s) since $START"
+          grep -E "Unmounting .*attempt=0|Shutting down .* because|duplicate of existing image" sim-infra.log \
+            | cut -c1-240 | tail -n 40 || true
+
+      - name: 📤 Upload Simulator Infrastructure Log
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: sim-infra-log-${{ matrix.name }}
+          path: sim-infra.log
+          if-no-files-found: ignore
 
       - name: 🩻 Collect Crash Reports
         if: always() && inputs.apple-tests-crash-watch-enabled

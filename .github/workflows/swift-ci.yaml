@@ -678,6 +678,13 @@ jobs:
             memory_pressure -Q 2>/dev/null | grep -i "free percentage"
             vm_stat 2>/dev/null | grep -E "page size|Pages (free|active|inactive|speculative|wired down|stored in compressor|occupied by compressor)|Swapins|Swapouts"
             echo "processes: $(ps -A | wc -l | tr -d ' ')"
+            # One top snapshot gives the system-wide thread total, the CPU
+            # split and the processes holding the most threads (a load average
+            # far above the CPU use of any process points at many runnable
+            # threads, which is what this is meant to show).
+            top -l 1 -n 6 -o th -stats pid,th,command 2>/dev/null \
+              | grep -E "^Processes:|^CPU usage:|^[0-9]+ +[0-9]+" \
+              | sed -E 's/^Processes:/system:/; s/^([0-9]+) +([0-9/]+) +(.*)$/  threads \2  pid \1  \3/'
             echo "top by memory:"
             ps -Aco rss=,pid=,etime=,comm= -m 2>/dev/null | head -n 8 \
               | awk '{printf "  %6.0f MB  pid %s  up %s  %s\n", $1/1024, $2, $3, $4}'

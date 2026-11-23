@@ -196,6 +196,20 @@ on:
         default: 12
         required: false
         type: number
+      apple-tests-resource-monitor-enabled:
+        description: >-
+          Samples the runner every 15 seconds while the Apple tests run
+          (load average, swap, free-memory percentage, the vm_stat counters,
+          the processes using the most memory and CPU, and the test and
+          simulator processes) and uploads the log as the
+          resource-monitor-<name> artifact. It is there to tell a test
+          process that was starved or killed by memory pressure on the
+          runner from a crash in the code under test: a crash report says
+          that a process died, not what the machine was doing when it did.
+          Diagnostics only; it never fails the job.
+        default: true
+        required: false
+        type: boolean
       apple-tests-timeout-minutes:
         description: >-
           Default timeout (minutes) for each Step 4 Apple Tests matrix leg.
@@ -649,6 +663,55 @@ jobs:
             -maxdepth 1 -type f \( -name '*.crash' -o -name '*.ips' \) 2>/dev/null \
             | sort > /tmp/crash-reports-before.txt
 
+      - name: 📈 Start Resource Monitor
+        if: inputs.apple-tests-resource-monitor-enabled
+        run: |
+          # One sample every 15 s into resource-monitor.log. Every command is
+          # read-only and cheap, and the sampler runs detached so that it
+          # outlives this step; the "Stop Resource Monitor" step ends it.
+          cat > /tmp/resource-monitor.sh <<'SH'
+          #!/bin/bash
+          # Written once: what machine the leg ran on.
+          echo "machine: $(sysctl -n hw.ncpu 2>/dev/null) logical / $(sysctl -n hw.physicalcpu 2>/dev/null) physical CPUs, $(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1073741824 )) GB, $(sysctl -n machdep.cpu.brand_string 2>/dev/null)"
+          echo "os: $(sw_vers -productVersion 2>/dev/null) ($(sw_vers -buildVersion 2>/dev/null))"
+          echo "spotlight: $(mdutil -s / 2>/dev/null | tail -n 1 | tr -s ' \t' ' ')"
+          while true; do
+            echo "=== $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+            echo "load: $(sysctl -n vm.loadavg 2>/dev/null)"
+            echo "swap: $(sysctl -n vm.swapusage 2>/dev/null)"
+            memory_pressure -Q 2>/dev/null | grep -i "free percentage"
+            vm_stat 2>/dev/null | grep -E "page size|Pages (free|active|inactive|speculative|wired down|stored in compressor|occupied by compressor)|Swapins|Swapouts"
+            echo "processes: $(ps -A | wc -l | tr -d ' ')"
+            # One top snapshot gives the system-wide thread total, the CPU
+            # split and the processes holding the most threads (a load average
+            # far above the CPU use of any process points at many runnable
+            # threads, which is what this is meant to show).
+            top -l 1 -n 6 -o th -stats pid,th,command 2>/dev/null \
+              | grep -E "^Processes:|^CPU usage:|^[0-9]+ +[0-9]+" \
+              | sed -E 's/^Processes:/system:/; s/^([0-9]+) +([0-9/]+) +(.*)$/  threads \2  pid \1  \3/'
+            # Processes in uninterruptible sleep (state U, "stuck" in top) and
+            # the Spotlight daemons: the first says what the machine is waiting
+            # on, the second whether indexing competes with the tests.
+            echo "uninterruptible: $(ps -Ao stat=,comm= 2>/dev/null | awk '$1 ~ /^U/ {n[$2]++} END {for (c in n) printf "%s x%d  ", c, n[c]}')"
+            echo "spotlight cpu: $(ps -Ao pcpu=,comm= 2>/dev/null | awk '$2 ~ /^(mds|mds_stores|mdworker.*|corespotlightd)$/ {s += $1} END {printf "%.1f%%", s}')"
+            echo "top by memory:"
+            ps -Aco rss=,pid=,etime=,comm= -m 2>/dev/null | head -n 8 \
+              | awk '{printf "  %6.0f MB  pid %s  up %s  %s\n", $1/1024, $2, $3, $4}'
+            echo "top by cpu:"
+            ps -Aco pcpu=,pid=,comm= -r 2>/dev/null | head -n 5 \
+              | awk '{printf "  %5s%%  pid %s  %s\n", $1, $2, $3}'
+            echo "test and simulator processes:"
+            ps -Aco rss=,pid=,etime=,comm= 2>/dev/null \
+              | grep -E "xcodebuild|xctest|swiftpm-testing|SimMetalHost|SimRenderServer|launchd_sim" \
+              | awk '{printf "  %6.0f MB  pid %s  up %s  %s\n", $1/1024, $2, $3, $4}'
+            sleep 15
+          done
+          SH
+          chmod +x /tmp/resource-monitor.sh
+          nohup /tmp/resource-monitor.sh > resource-monitor.log 2>&1 < /dev/null &
+          echo $! > /tmp/resource-monitor.pid
+          echo "Resource monitor started (pid $(cat /tmp/resource-monitor.pid))."
+
       - name: 🧪 Run Tests with Coverage
         env:
           NSUnbufferedIO: YES
@@ -911,6 +974,25 @@ jobs:
         with:
           name: raw-test-log-${{ matrix.name }}
           path: raw-test-output.log
+
+      - name: 📉 Stop Resource Monitor
+        if: always() && inputs.apple-tests-resource-monitor-enabled
+        run: |
+          if [ -f /tmp/resource-monitor.pid ]; then
+            kill "$(cat /tmp/resource-monitor.pid)" 2>/dev/null || true
+          fi
+          touch resource-monitor.log
+          SAMPLES="$(grep -c '^===' resource-monitor.log || true)"
+          LOWEST="$(grep -i 'free percentage' resource-monitor.log | sed 's/.*: *//; s/%//' | sort -n | head -n 1)"
+          echo "Resource monitor: ${SAMPLES:-0} sample(s); lowest free memory ${LOWEST:-unknown}%."
+
+      - name: 📤 Upload Resource Monitor Log
+        if: always() && inputs.apple-tests-resource-monitor-enabled
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: resource-monitor-${{ matrix.name }}
+          path: resource-monitor.log
+          if-no-files-found: ignore
 
       - name: 🪵 Collect Simulator Infrastructure Log
         if: always()

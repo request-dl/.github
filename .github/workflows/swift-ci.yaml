@@ -205,6 +205,24 @@ on:
         required: false
         type: number
 
+      apple-build-only-matrix:
+        description: >-
+          JSON array of destinations that are only built, never tested, in
+          their own `apple-build-only` job. Use it for what the simulator
+          legs of apple-tests-matrix cannot show: a device destination such
+          as `generic/platform=watchOS` compiles for arm64_32, where `Int`
+          has 32 bits, while the watchOS Simulator is arm64 with a 64-bit
+          `Int`. Each entry takes `destination` and `name`, and optionally
+          `timeout` (minutes, defaults to apple-tests-timeout-minutes) and
+          `args` (extra xcodebuild arguments). It is built with
+          `xcodebuild build` and CODE_SIGNING_ALLOWED=NO, no tests and no
+          coverage. Empty by default, which skips the job.
+          Example:
+          [{"destination":"generic/platform=watchOS","name":"watchOS device"}]
+        default: '[]'
+        required: false
+        type: string
+
       # ── Step 4: Third Party Tests ───────────────────────────
       enable-third-party-tests:
         description: 'Step 4 – Run third-party platform tests'
@@ -220,6 +238,24 @@ on:
         default: 20
         required: false
         type: number
+      third-party-tests-matrix:
+        description: >-
+          JSON array of the Step 4 Third Party Tests legs. Each entry takes
+          `platform` (the runner label) and `name`, and optionally `args`
+          (extra arguments for `swift test`, for example
+          `--disable-default-traits`), `timeout` (minutes, defaults to
+          third-party-tests-timeout-minutes) and `setup-swift` (set it to
+          false to keep the toolchain of the runner's Xcode instead of
+          installing `swift-version`; a leg that needs the Apple SDK's
+          frameworks wants this). On a macOS leg the Xcode in `xcode-version`
+          is selected and the open-file limit is raised, since a suite that
+          opens many file-backed buffers at once exhausts the default
+          soft limit of 256. Every leg uploads a `third-party-<name>`
+          coverage artifact when third-party-coverage-enabled is on.
+          The default is the single Linux leg this workflow always ran.
+        default: '[{"platform":"ubuntu-latest","name":"Linux"}]'
+        required: false
+        type: string
 
       # ── Step 4: Linkage Test (FoundationEssentials) ─────────
       enable-linkage-test:
@@ -1109,6 +1145,74 @@ jobs:
           name: apple-${{ matrix.name }}
           path: coverage-artifacts/
 
+  # ── STEP 4A-2: Apple build only ──────────────────────────────
+  apple-build-only:
+    name: "🛠️ ${{ matrix.name }}"
+    needs: [header-validation, format-check, breaking-changes]
+    if: |
+      !cancelled() &&
+      inputs.apple-build-only-matrix != '[]' &&
+      (needs.header-validation.result == 'success' || needs.header-validation.result == 'skipped') &&
+      (needs.format-check.result == 'success' || needs.format-check.result == 'skipped') &&
+      (needs.breaking-changes.result == 'success' || needs.breaking-changes.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix:
+        # An empty `include` is an error when the workflow is expanded, even
+        # though the `if` above skips the job, so an empty input becomes one
+        # placeholder leg that is never run.
+        include: ${{ fromJSON(inputs.apple-build-only-matrix == '[]' && '[{"name":"none","destination":"none"}]' || inputs.apple-build-only-matrix) }}
+    runs-on: ${{ inputs.platform }}
+    timeout-minutes: ${{ matrix.timeout || inputs.apple-tests-timeout-minutes }}
+    steps:
+      - name: ⬇️ Get Sources
+        uses: actions/checkout@v7.0.1
+
+      - name: 🍺 Homebrew Dependencies
+        run: brew install xcbeautify
+
+      - name: ☑️ Xcode Select
+        run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
+
+      - name: 📦 Cache SwiftPM Dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: .swiftpm-cache
+          key: macOS-clonedSourcePackages-${{ hashFiles('**/Package*.swift') }}
+          restore-keys: |
+            macOS-clonedSourcePackages-
+
+      - name: 🛠️ Build Package
+        env:
+          NSUnbufferedIO: YES
+          DEBUG: ${{ inputs.debug }}
+          BUILD_DESTINATION: ${{ matrix.destination }}
+          BUILD_SCHEME: ${{ inputs.package-name }}
+          BUILD_ARGS: ${{ matrix.args }}
+        run: |
+          set -o pipefail
+
+          # Several words in one entry's `args`, split into an array.
+          read -r -a EXTRA_ARGS <<< "$BUILD_ARGS"
+
+          # Plain `build`, not `build-for-testing`: nothing here is tested, and
+          # a test bundle for a device destination would ask for a signed host.
+          if [ "$DEBUG" = "true" ]; then
+            xcodebuild build \
+              -scheme "$BUILD_SCHEME" \
+              -destination "$BUILD_DESTINATION" \
+              -derivedDataPath .xcbuild \
+              -clonedSourcePackagesDirPath .swiftpm-cache \
+              CODE_SIGNING_ALLOWED=NO "${EXTRA_ARGS[@]}"
+          else
+            xcodebuild build \
+              -scheme "$BUILD_SCHEME" \
+              -destination "$BUILD_DESTINATION" \
+              -derivedDataPath .xcbuild \
+              -clonedSourcePackagesDirPath .swiftpm-cache \
+              CODE_SIGNING_ALLOWED=NO "${EXTRA_ARGS[@]}" 2>&1 | xcbeautify --quiet --renderer github-actions
+          fi
+
   # ── STEP 4B ─────────────────────────────────────────────────
   third-party-tests:
     name: "🔧 ${{ matrix.name }}"
@@ -1122,18 +1226,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: "ubuntu-latest"
-            name: "Linux"
-          # - platform: "windows-latest"
-          #   name: "Windows"
+        include: ${{ fromJSON(inputs.third-party-tests-matrix) }}
     runs-on: ${{ matrix.platform }}
-    timeout-minutes: ${{ inputs.third-party-tests-timeout-minutes }}
+    timeout-minutes: ${{ matrix.timeout || inputs.third-party-tests-timeout-minutes }}
     steps:
       - name: ☑️ Swift Select
+        # A leg that sets "setup-swift": false keeps the toolchain of the
+        # runner's Xcode. A missing key is null, which is not false, so
+        # existing entries still install `swift-version`.
+        if: matrix.setup-swift != false
         uses: SwiftyLab/setup-swift@v1.14.2
         with:
           swift-version: ${{ inputs.swift-version }}
+
+      - name: ☑️ Xcode Select
+        if: runner.os == 'macOS'
+        run: sudo xcode-select -switch /Applications/Xcode_${{ inputs.xcode-version }}.app
 
       - name: ⬇️ Get Sources
         uses: actions/checkout@v7.0.1
@@ -1149,7 +1257,26 @@ jobs:
             ${{ runner.os }}-swiftpm-deps-
 
       - name: ⚒️ Test Package
-        run: swift test --enable-code-coverage
+        env:
+          TEST_ARGS: ${{ matrix.args }}
+        run: |
+          # macOS runners default to a soft limit of 256 open files. A suite
+          # that opens hundreds of file-backed buffers at once exhausts it,
+          # and the code under test swallows the failed open, so the tests
+          # fail with "no data" and not with a clear error.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            hard_limit="$(ulimit -Hn)"
+            if [ "$hard_limit" = "unlimited" ]; then
+              ulimit -n 65536
+            else
+              ulimit -n "$hard_limit"
+            fi
+            echo "open-file soft limit: $(ulimit -Sn)"
+          fi
+
+          # Several words in one entry's `args`, split into an array.
+          read -r -a EXTRA_ARGS <<< "$TEST_ARGS"
+          swift test --enable-code-coverage "${EXTRA_ARGS[@]}"
 
       - name: 🔀 Move Coverage Files (Unix)
         if: inputs.third-party-coverage-enabled && (runner.os == 'Linux' || runner.os == 'macOS')

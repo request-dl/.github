@@ -167,6 +167,27 @@ on:
           {"destination":"platform=macOS,arch=arm64,variant=Mac Catalyst,name=My Mac","name":"macOS Catalyst"}]
         required: false
         type: string
+      apple-tests-compilation-cache-enabled:
+        description: >-
+          Turns on Xcode's compilation cache (COMPILATION_CACHE_ENABLE_CACHING)
+          for the Step 4 Apple Tests build and keeps it between runs with
+          actions/cache. The cache lives in .xcbuild/CompilationCache.noindex.
+          It is restored for every leg, and saved only by a push to the
+          default branch, so pull requests read it and never write it. The key is
+          the Xcode version, the leg's `name` and the hash of the Package*.swift
+          files, with the same key without the hash as a fallback: the
+          dependencies, which are most of the compilation, hit until a
+          Package.swift changes, and the package's own code hits for the files
+          that have not changed since the cache was saved. The first run that
+          fills the cache is slower, measured at about a third on macOS (135 s
+          without the cache, 185 s filling it, 29 s with an identical cache).
+          One cache is about 300 MB compressed per leg (macOS, measured), and
+          GitHub keeps 10 GB per repository, so a leg that sets
+          `"compile-cache": false` in apple-tests-matrix is left out. The job
+          log gets a hit and miss count and the remarks are not printed.
+        default: false
+        required: false
+        type: boolean
       apple-tests-crash-watch-enabled:
         description: >-
           Watches ~/Library/Logs/DiagnosticReports (and the system-wide
@@ -566,6 +587,10 @@ jobs:
         include: ${{ fromJSON(inputs.apple-tests-matrix) }}
     runs-on: ${{ inputs.platform }}
     timeout-minutes: ${{ matrix.timeout || inputs.apple-tests-timeout-minutes }}
+    env:
+      # "true" only when the input is on and the leg has not opted out with
+      # "compile-cache": false. A missing key is null, which is not false.
+      COMPILE_CACHE: ${{ inputs.apple-tests-compilation-cache-enabled && matrix.compile-cache != false }}
     steps:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v7.0.1
@@ -591,12 +616,37 @@ jobs:
           restore-keys: |
             macOS-clonedSourcePackages-
 
+      - name: 🗄️ Restore Compilation Cache
+        id: compile-cache
+        if: env.COMPILE_CACHE == 'true'
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: .xcbuild/CompilationCache.noindex
+          key: compilecache-${{ inputs.xcode-version }}-${{ matrix.name }}-${{ hashFiles('**/Package*.swift') }}
+          restore-keys: |
+            compilecache-${{ inputs.xcode-version }}-${{ matrix.name }}-
+
       - name: ⚒️ Build Package
         env:
           NSUnbufferedIO: YES
           DEBUG: ${{ inputs.debug }}
+          COMPILE_CACHE_ARGS: ${{ env.COMPILE_CACHE == 'true' && 'COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES' || '' }}
         run: |
           set -o pipefail
+
+          # The cache settings, split into an array (empty when it is off).
+          read -r -a CACHE_ARGS <<< "$COMPILE_CACHE_ARGS"
+
+          # With the diagnostic remarks on, xcodebuild prints two lines for
+          # every compilation. They are kept in a file for the summary step and
+          # left out of the log, where there would be thousands of them.
+          log_and_filter() {
+            if [ "$COMPILE_CACHE" = "true" ]; then
+              tee /tmp/xcodebuild-build.log | { grep -v -E 'Cache (hit|miss)' || true; }
+            else
+              cat
+            fi
+          }
 
           build() {
             # xcbeautify's reformatted output hides exactly what you need
@@ -608,13 +658,15 @@ jobs:
                 -scheme "${{ inputs.package-name }}" \
                 -destination "${{ matrix.destination }}" \
                 -derivedDataPath .xcbuild \
-                -clonedSourcePackagesDirPath .swiftpm-cache
+                -clonedSourcePackagesDirPath .swiftpm-cache \
+                "${CACHE_ARGS[@]}" 2>&1 | log_and_filter
             else
               xcodebuild build-for-testing \
                 -scheme "${{ inputs.package-name }}" \
                 -destination "${{ matrix.destination }}" \
                 -derivedDataPath .xcbuild \
-                -clonedSourcePackagesDirPath .swiftpm-cache 2>&1 | xcbeautify --quiet --renderer github-actions
+                -clonedSourcePackagesDirPath .swiftpm-cache \
+                "${CACHE_ARGS[@]}" 2>&1 | log_and_filter | xcbeautify --quiet --renderer github-actions
             fi
           }
 
@@ -640,6 +692,30 @@ jobs:
             sleep $((ATTEMPT * 30))
             ATTEMPT=$((ATTEMPT + 1))
           done
+
+      - name: 📊 Compilation Cache Summary
+        if: env.COMPILE_CACHE == 'true'
+        run: |
+          HITS="$(grep -c 'Cache hit' /tmp/xcodebuild-build.log 2>/dev/null || true)"
+          MISSES="$(grep -c 'Cache miss' /tmp/xcodebuild-build.log 2>/dev/null || true)"
+          RESTORED="${{ steps.compile-cache.outputs.cache-hit == 'true' && 'exact key' || (steps.compile-cache.outputs.cache-matched-key && 'fallback key' || 'no cache') }}"
+          echo "Compilation cache (${{ matrix.name }}): restored from ${RESTORED}; ${HITS:-0} hit(s), ${MISSES:-0} miss(es)."
+          {
+            echo "### Compilation cache: ${{ matrix.name }}"
+            echo "Restored from: ${RESTORED}. Hits: ${HITS:-0}. Misses: ${MISSES:-0}."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 💾 Save Compilation Cache
+        # Only the default branch writes the cache, and only when the exact
+        # key is not there yet (a cache entry can not be overwritten).
+        if: >-
+          success() && env.COMPILE_CACHE == 'true' &&
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+          steps.compile-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: .xcbuild/CompilationCache.noindex
+          key: compilecache-${{ inputs.xcode-version }}-${{ matrix.name }}-${{ hashFiles('**/Package*.swift') }}
 
       - name: 📸 Snapshot Existing Crash Reports
         if: inputs.apple-tests-crash-watch-enabled

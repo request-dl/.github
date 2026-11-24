@@ -1314,9 +1314,11 @@ jobs:
     steps:
       - name: ☑️ Swift Select
         # A leg that sets "setup-swift": false keeps the toolchain of the
-        # runner's Xcode. A missing key is null, which is not false, so
-        # existing entries still install `swift-version`.
-        if: matrix.setup-swift != false
+        # runner's Xcode. A missing key is null, and `null != false` is
+        # false in an expression (both turn into 0), which skipped this
+        # step for every leg without the key. Comparing the JSON text tells
+        # the two apart: "null" for a missing key, "false" for false.
+        if: toJSON(matrix.setup-swift) != 'false'
         uses: SwiftyLab/setup-swift@v1.14.2
         with:
           swift-version: ${{ inputs.swift-version }}

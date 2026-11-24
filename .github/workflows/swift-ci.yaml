@@ -639,8 +639,9 @@ jobs:
     timeout-minutes: ${{ matrix.timeout || inputs.apple-tests-timeout-minutes }}
     env:
       # "true" only when the input is on and the leg has not opted out with
-      # "compile-cache": false. A missing key is null, which is not false.
-      COMPILE_CACHE: ${{ inputs.apple-tests-compilation-cache-enabled && matrix.compile-cache != false }}
+      # "compile-cache": false. A missing key is null, and `null != false` is
+      # false in an expression, so the JSON text is compared instead.
+      COMPILE_CACHE: ${{ inputs.apple-tests-compilation-cache-enabled && toJSON(matrix.compile-cache) != 'false' }}
     steps:
       - name: ⬇️ Get Sources
         uses: actions/checkout@v7.0.1
